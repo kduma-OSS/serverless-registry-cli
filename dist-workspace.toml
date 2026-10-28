@@ -5,6 +5,9 @@ members = ["cargo:."]
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
+# Releases are started by the "Bump and release" workflow through workflow_dispatch,
+# so a tag pushed with GITHUB_TOKEN needs no personal access token.
+dispatch-releases = true
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
