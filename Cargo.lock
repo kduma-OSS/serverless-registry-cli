@@ -1632,7 +1632,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-cli"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-core"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "hex",
  "percent-encoding",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-eco-cargo"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "semver",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-eco-composer"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "semver",
  "serde_json",
@@ -1712,7 +1712,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-eco-generic"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "semver",
  "serde",
@@ -1723,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-eco-maven"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "quick-xml",
  "serde_json",
@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-eco-npm"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "semver",
@@ -1746,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-eco-nuget"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "quick-xml",
  "serde_json",
@@ -1758,7 +1758,7 @@ dependencies = [
 
 [[package]]
 name = "sreg-eco-swift"
-version = "0.1.1-beta.1"
+version = "0.1.1"
 dependencies = [
  "semver",
  "serde_json",
