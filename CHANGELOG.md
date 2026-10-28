@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The registry URL may carry the token in its userinfo, Composer style:
+  `https://<login>:<password>@packages.example.com/` (both parts percent-decoded). The
+  credentials need a login and a password, are refused over plain `http` except for
+  `localhost`/`127.0.0.1`, and are stripped from the URL before it is used or printed.
+  `--oidc` still wins; an explicit `--token`/`REGISTRY_TOKEN` that differs from the URL's
+  credentials is an error. `sreg auth` writes the URL's credentials, and the GitHub
+  Action skips OIDC when `registry` carries them.
+
 ## [0.1.0] - 2026-10-28
 
 ### Added

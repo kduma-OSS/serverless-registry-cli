@@ -34,10 +34,17 @@ earlier steps, as for a local build.
 With `token`, the action exports it as `REGISTRY_TOKEN`. Use a `publish` credential of
 the project, stored as a repository or environment secret.
 
-Without `token`, the action authenticates with the job's GitHub Actions OIDC token
-(`sreg … publish --oidc`). No secret is needed, but the job must be allowed to request
-the token, and the registry must have a `publish` credential with a `gh` secret
-trusting the repository (see
+The token can instead be part of `registry`, as
+`https://<login>:<password>@packages.example.com` (percent-encode a `@` or `:` in the
+login or password); `token` may then be omitted and OIDC is not used. Store such a URL
+as a secret (`registry: ${{ secrets.REGISTRY_URL }}`) so that GitHub masks it in the logs;
+`sreg` itself never prints the credentials. If both are given, `token` must equal the
+URL's credentials.
+
+Without `token` (and without credentials in `registry`), the action authenticates with
+the job's GitHub Actions OIDC token (`sreg … publish --oidc`). No secret is needed, but
+the job must be allowed to request the token, and the registry must have a `publish`
+credential with a `gh` secret trusting the repository (see
 [A publish credential for GitHub Actions](https://github.com/kduma-OSS/serverless-registry-worker/blob/main/docs/deployment.md#a-publish-credential-for-github-actions-oidc-no-secret) in the Worker's deployment guide):
 
 ```yaml
@@ -62,8 +69,8 @@ jobs:
 | Input | Default | Description |
 | --- | --- | --- |
 | `ecosystem` | – (required) | `composer`, `npm`, `cargo`, `nuget`, `generic`, `swift` or `maven`. |
-| `registry` | – (required) | Base URL of the registry (`REGISTRY_URL`). |
-| `token` | empty | Publish token (`REGISTRY_TOKEN`). Empty: OIDC (`--oidc`, needs `id-token: write`). |
+| `registry` | – (required) | Base URL of the registry (`REGISTRY_URL`); may carry the token as `https://<login>:<password>@host`. |
+| `token` | empty | Publish token (`REGISTRY_TOKEN`). Empty, and no credentials in `registry`: OIDC (`--oidc`, needs `id-token: write`). |
 | `oidc-project` | empty | With OIDC: the project of the token (`--oidc-project`). |
 | `version` | empty | Version to publish (`--version`); a leading `v` is dropped, so `${{ github.ref_name }}` works. Required for `generic`. |
 | `tag-prefix` | empty | Take the version from the tag on `HEAD` with this prefix (`--tag-prefix`), for monorepos. |

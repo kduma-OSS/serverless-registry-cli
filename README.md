@@ -517,10 +517,37 @@ variables:
 
 | Flag | Environment variable | Description |
 | --- | --- | --- |
-| `--registry <url>` | `REGISTRY_URL` | Base URL of the registry, e.g. `https://packages.example.com`. |
+| `--registry <url>` | `REGISTRY_URL` | Base URL of the registry, e.g. `https://packages.example.com`; it may carry the token (below). |
 | `--token <token>` | `REGISTRY_TOKEN` | Token in the form `[<source>.]<project>:[<type>.]<secret>`. |
 
 In CI, pass both as environment variables from repository secrets.
+
+### Credentials in the registry URL
+
+As with Composer, the registry URL may carry the token in its userinfo instead of
+`--token`/`REGISTRY_TOKEN`:
+
+```sh
+export REGISTRY_URL='https://shop-frontend:k7Qx2mN9pLw4@packages.example.com/'
+sreg whoami
+```
+
+The token is `<login>:<password>` after percent-decoding both parts, so a `@`, `:`, `/`,
+`?`, `#` or `%` in the login or the password must be percent-encoded (`%40`, `%3A`,
+`%2F`, `%3F`, `%23`, `%25`). Rules:
+
+- Both a login and a password are required (`https://shop-frontend@…` is an error).
+- Credentials are only accepted over `https`; plain `http` is refused, except for
+  `localhost` and `127.0.0.1` (local development).
+- `sreg` strips the credentials before using the URL: requests, output, logs and `--json`
+  only ever show `https://packages.example.com/`.
+- Precedence: `--oidc` wins over everything; otherwise `--token`/`REGISTRY_TOKEN` and the
+  URL's credentials must agree when both are given (an error otherwise), and the URL's
+  credentials are used when there is no explicit token.
+- `sreg version` never sends them: its endpoint is anonymous.
+
+Treat such a URL as a secret: in GitHub Actions, store it in `secrets.` rather than in
+the workflow file.
 
 ## Exit codes
 

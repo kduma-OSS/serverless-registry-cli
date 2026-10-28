@@ -20,7 +20,14 @@ determine where the token is stored. No request is made to the registry itself.
 
 ## Where the token comes from
 
-- Without `--oidc`: `--token` or `REGISTRY_TOKEN`, used as is.
+- Without `--oidc`: `--token` or `REGISTRY_TOKEN`, used as is, or the credentials of a
+  registry URL of the form `https://<login>:<password>@packages.example.com/`, which
+  give the token `<login>:<password>` (both parts percent-decoded, so a `@` or `:` in
+  them must be written `%40` or `%3A`). The host and path the token is stored under come
+  from the URL without its credentials. When both an explicit token and URL credentials
+  are given they must be equal, otherwise `sreg auth` fails. URL credentials need both a
+  login and a password and are refused over plain `http` except for `localhost` and
+  `127.0.0.1`.
 - With `--oidc` inside a GitHub Actions job with `permissions: id-token: write`: `sreg`
   requests a JWT from `ACTIONS_ID_TOKEN_REQUEST_URL` (with
   `Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN` and
@@ -161,6 +168,9 @@ which is not secret) and the file is printed.
 ## Examples
 
 ```sh
+# The token can also come from the registry URL, Composer style.
+REGISTRY_URL='https://shop-frontend:k7Qx2mN9@packages.example.com' sreg auth npm --write .npmrc
+
 # Local development: store a read token for Composer.
 sreg auth composer --write auth.json
 
