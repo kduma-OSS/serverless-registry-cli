@@ -19,6 +19,7 @@ impl Output {
     }
 
     /// Whether `--json` is set.
+    #[cfg_attr(not(feature = "generic"), allow(dead_code))]
     pub fn is_json(&self) -> bool {
         self.json
     }

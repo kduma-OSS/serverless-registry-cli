@@ -4,13 +4,33 @@ use anyhow::Context;
 use serde::Serialize;
 use sreg_core::models::PublishCommitResponse;
 use sreg_core::publish::{publish, PublishOptions, PublishOutcome};
-use sreg_core::{Ecosystem, Package, PackageOptions, Packager};
+use sreg_core::{Ecosystem, Package};
+#[cfg(any(
+    feature = "composer",
+    feature = "npm",
+    feature = "cargo",
+    feature = "nuget"
+))]
+use sreg_core::{PackageOptions, Packager};
 
-use crate::cli::{GlobalArgs, OidcArgs, PublishArgs};
+#[cfg(any(
+    feature = "composer",
+    feature = "npm",
+    feature = "cargo",
+    feature = "nuget"
+))]
+use crate::cli::PublishArgs;
+use crate::cli::{GlobalArgs, OidcArgs};
 use crate::context;
 use crate::output::{table, Output};
 
 /// Packages the project with `packager` and publishes it.
+#[cfg(any(
+    feature = "composer",
+    feature = "npm",
+    feature = "cargo",
+    feature = "nuget"
+))]
 pub async fn run_packager(
     global: &GlobalArgs,
     out: &Output,

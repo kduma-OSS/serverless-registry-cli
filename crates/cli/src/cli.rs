@@ -47,30 +47,35 @@ pub struct GlobalArgs {
 #[derive(Subcommand)]
 pub enum Command {
     /// Package and publish Composer packages
+    #[cfg(feature = "composer")]
     Composer {
         #[command(subcommand)]
         command: ComposerCommand,
     },
 
     /// Package and publish npm packages
+    #[cfg(feature = "npm")]
     Npm {
         #[command(subcommand)]
         command: NpmCommand,
     },
 
     /// Package and publish cargo crates
+    #[cfg(feature = "cargo")]
     Cargo {
         #[command(subcommand)]
         command: CargoCommand,
     },
 
     /// Package and publish NuGet packages
+    #[cfg(feature = "nuget")]
     Nuget {
         #[command(subcommand)]
         command: NugetCommand,
     },
 
     /// Publish and download generic files
+    #[cfg(feature = "generic")]
     Generic {
         #[command(subcommand)]
         command: GenericCommand,
@@ -90,21 +95,27 @@ impl Command {
     /// The full name of the command, e.g. `composer publish`.
     pub fn name(&self) -> &'static str {
         match self {
+            #[cfg(feature = "composer")]
             Command::Composer {
                 command: ComposerCommand::Publish(_),
             } => "composer publish",
+            #[cfg(feature = "npm")]
             Command::Npm {
                 command: NpmCommand::Publish(_),
             } => "npm publish",
+            #[cfg(feature = "cargo")]
             Command::Cargo {
                 command: CargoCommand::Publish(_),
             } => "cargo publish",
+            #[cfg(feature = "nuget")]
             Command::Nuget {
                 command: NugetCommand::Publish(_),
             } => "nuget publish",
+            #[cfg(feature = "generic")]
             Command::Generic {
                 command: GenericCommand::Publish(_),
             } => "generic publish",
+            #[cfg(feature = "generic")]
             Command::Generic {
                 command: GenericCommand::Get(_),
             } => "generic get",
@@ -116,6 +127,13 @@ impl Command {
 }
 
 /// Authentication through GitHub Actions OIDC instead of REGISTRY_TOKEN.
+#[cfg(any(
+    feature = "composer",
+    feature = "npm",
+    feature = "cargo",
+    feature = "nuget",
+    feature = "generic"
+))]
 #[derive(Args)]
 pub struct OidcArgs {
     /// Authenticate with a GitHub Actions OIDC token instead of REGISTRY_TOKEN
@@ -128,6 +146,12 @@ pub struct OidcArgs {
 }
 
 /// Options shared by the `publish` commands of composer, npm, cargo and nuget.
+#[cfg(any(
+    feature = "composer",
+    feature = "npm",
+    feature = "cargo",
+    feature = "nuget"
+))]
 #[derive(Args)]
 pub struct PublishArgs {
     /// Directory of the project to publish
@@ -147,24 +171,28 @@ pub struct PublishArgs {
     pub oidc: OidcArgs,
 }
 
+#[cfg(feature = "composer")]
 #[derive(Subcommand)]
 pub enum ComposerCommand {
     /// Archive the project and publish it
     Publish(ComposerPublishArgs),
 }
 
+#[cfg(feature = "composer")]
 #[derive(Args)]
 pub struct ComposerPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
 }
 
+#[cfg(feature = "npm")]
 #[derive(Subcommand)]
 pub enum NpmCommand {
     /// Pack the project with `npm pack` and publish it
     Publish(NpmPublishArgs),
 }
 
+#[cfg(feature = "npm")]
 #[derive(Args)]
 pub struct NpmPublishArgs {
     #[command(flatten)]
@@ -175,12 +203,14 @@ pub struct NpmPublishArgs {
     pub tag: Option<String>,
 }
 
+#[cfg(feature = "cargo")]
 #[derive(Subcommand)]
 pub enum CargoCommand {
     /// Package the crate with `cargo package` and publish it
     Publish(CargoPublishArgs),
 }
 
+#[cfg(feature = "cargo")]
 #[derive(Args)]
 pub struct CargoPublishArgs {
     #[command(flatten)]
@@ -191,18 +221,21 @@ pub struct CargoPublishArgs {
     pub cargo_args: Vec<String>,
 }
 
+#[cfg(feature = "nuget")]
 #[derive(Subcommand)]
 pub enum NugetCommand {
     /// Pack the project with `dotnet pack` and publish it
     Publish(NugetPublishArgs),
 }
 
+#[cfg(feature = "nuget")]
 #[derive(Args)]
 pub struct NugetPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
 }
 
+#[cfg(feature = "generic")]
 #[derive(Subcommand)]
 pub enum GenericCommand {
     /// Publish files as one version of a generic package
@@ -212,6 +245,7 @@ pub enum GenericCommand {
     Get(GenericGetArgs),
 }
 
+#[cfg(feature = "generic")]
 #[derive(Args)]
 pub struct GenericPublishArgs {
     /// Package name: [<group>/]<name>, lower case
@@ -258,6 +292,7 @@ pub struct GenericPublishArgs {
     pub oidc: OidcArgs,
 }
 
+#[cfg(feature = "generic")]
 #[derive(Args)]
 pub struct GenericGetArgs {
     /// Package name: [<group>/]<name>
@@ -342,6 +377,7 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    #[cfg(feature = "composer")]
     #[test]
     fn composer_publish_accepts_version() {
         let cli =
@@ -356,6 +392,12 @@ mod tests {
         assert_eq!(args.publish.path, PathBuf::from("."));
     }
 
+    #[cfg(all(
+        feature = "composer",
+        feature = "npm",
+        feature = "cargo",
+        feature = "nuget"
+    ))]
     #[test]
     fn every_publish_command_accepts_the_common_flags() {
         for eco in ["composer", "npm", "cargo", "nuget"] {
@@ -378,6 +420,7 @@ mod tests {
         assert!(Cli::try_parse_from(["sreg", "cargo", "publish", "--tag", "next"]).is_err());
     }
 
+    #[cfg(feature = "cargo")]
     #[test]
     fn cargo_publish_passes_trailing_arguments() {
         let cli =
@@ -411,6 +454,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "generic")]
     #[test]
     fn generic_publish_takes_files_or_a_spec() {
         let cli = Cli::try_parse_from([
@@ -452,6 +496,7 @@ mod tests {
         .is_ok());
     }
 
+    #[cfg(feature = "generic")]
     #[test]
     fn generic_get_defaults_to_latest_in_the_current_directory() {
         let cli = Cli::try_parse_from(["sreg", "generic", "get", "tools/cli"]).unwrap();

@@ -10,7 +10,17 @@ use wiremock::MockServer;
 async fn packaging_failures_stop_before_contacting_the_registry() {
     let server = MockServer::start().await;
 
-    for eco in ["composer", "npm", "cargo", "nuget"] {
+    let ecosystems = [
+        #[cfg(feature = "composer")]
+        "composer",
+        #[cfg(feature = "npm")]
+        "npm",
+        #[cfg(feature = "cargo")]
+        "cargo",
+        #[cfg(feature = "nuget")]
+        "nuget",
+    ];
+    for eco in ecosystems {
         sreg(
             &server,
             &[eco, "publish", "--version", "1.0.0", "--dry-run"],

@@ -1,5 +1,7 @@
 //! `sreg generic publish` and `sreg generic get` against a mock registry.
 
+#![cfg(feature = "generic")]
+
 mod common;
 
 use std::path::Path;

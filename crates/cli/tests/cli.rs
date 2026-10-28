@@ -6,9 +6,34 @@ use predicates::prelude::*;
 #[test]
 fn help_lists_all_commands() {
     let mut assert = cargo_bin_cmd!("sreg").arg("--help").assert().success();
-    for command in ["composer", "npm", "cargo", "whoami", "auth", "version"] {
+    let commands = [
+        "whoami",
+        "auth",
+        "version",
+        #[cfg(feature = "composer")]
+        "composer",
+        #[cfg(feature = "npm")]
+        "npm",
+        #[cfg(feature = "cargo")]
+        "cargo",
+        #[cfg(feature = "nuget")]
+        "nuget",
+        #[cfg(feature = "generic")]
+        "generic",
+    ];
+    for command in commands {
         assert = assert.stdout(predicate::str::contains(command));
     }
+}
+
+#[cfg(not(feature = "npm"))]
+#[test]
+fn disabled_ecosystems_are_not_available() {
+    cargo_bin_cmd!("sreg")
+        .args(["npm", "publish"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("unrecognized subcommand"));
 }
 
 #[test]

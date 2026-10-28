@@ -36,6 +36,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
 
+  features:
+    name: Feature gating
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # A binary with a single ecosystem must build and pass its tests.
+      - run: cargo clippy -p sreg-cli --all-targets --locked --no-default-features --features composer -- -D warnings
+      - run: cargo test -p sreg-cli --locked --no-default-features --features composer
+
   msrv:
     name: Minimum supported Rust version
     runs-on: ubuntu-latest

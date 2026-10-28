@@ -1,14 +1,30 @@
 //! Command implementations.
 
 mod auth;
+#[cfg(feature = "generic")]
 mod generic;
+#[cfg(any(
+    feature = "composer",
+    feature = "npm",
+    feature = "cargo",
+    feature = "nuget",
+    feature = "generic"
+))]
 mod publish;
 mod version;
 mod whoami;
 
-use crate::cli::{
-    CargoCommand, Cli, Command, ComposerCommand, GenericCommand, NpmCommand, NugetCommand,
-};
+#[cfg(feature = "cargo")]
+use crate::cli::CargoCommand;
+#[cfg(feature = "composer")]
+use crate::cli::ComposerCommand;
+#[cfg(feature = "generic")]
+use crate::cli::GenericCommand;
+#[cfg(feature = "npm")]
+use crate::cli::NpmCommand;
+#[cfg(feature = "nuget")]
+use crate::cli::NugetCommand;
+use crate::cli::{Cli, Command};
 use crate::output::Output;
 
 /// Runs the parsed command.
@@ -20,12 +36,14 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Whoami => whoami::run(global, &out).await,
         Command::Version => version::run(global, &out).await,
         Command::Auth(args) => auth::run(global, &out, args).await,
+        #[cfg(feature = "composer")]
         Command::Composer {
             command: ComposerCommand::Publish(args),
         } => {
             let packager = sreg_eco_composer::ComposerPackager;
             publish::run_packager(global, &out, &packager, &args.publish, None, Vec::new()).await
         }
+        #[cfg(feature = "npm")]
         Command::Npm {
             command: NpmCommand::Publish(args),
         } => {
@@ -40,6 +58,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             )
             .await
         }
+        #[cfg(feature = "cargo")]
         Command::Cargo {
             command: CargoCommand::Publish(args),
         } => {
@@ -54,12 +73,15 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             )
             .await
         }
+        #[cfg(feature = "generic")]
         Command::Generic {
             command: GenericCommand::Publish(args),
         } => generic::publish(global, &out, args).await,
+        #[cfg(feature = "generic")]
         Command::Generic {
             command: GenericCommand::Get(args),
         } => generic::get(global, &out, args).await,
+        #[cfg(feature = "nuget")]
         Command::Nuget {
             command: NugetCommand::Publish(args),
         } => {
