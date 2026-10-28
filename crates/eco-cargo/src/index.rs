@@ -12,7 +12,7 @@ use crate::metadata::{MetadataDependency, MetadataPackage};
 pub const CRATES_IO_INDEX: &str = "https://github.com/rust-lang/crates.io-index";
 
 /// Ways crates.io's index is spelled in `source` and `registry` of `cargo metadata`.
-const CRATES_IO_SOURCES: [&str; 4] = [
+pub(crate) const CRATES_IO_SOURCES: [&str; 4] = [
     "registry+https://github.com/rust-lang/crates.io-index",
     "https://github.com/rust-lang/crates.io-index",
     "sparse+https://index.crates.io/",
@@ -160,7 +160,9 @@ fn explicit_features(package: &MetadataPackage) -> Map<String, Value> {
 
 /// Splits features like `cargo publish`: a feature using the `dep:` or `pkg?/feature`
 /// syntax in any of its values goes to `features2`, every other one to `features`.
-fn split_features(features: &Map<String, Value>) -> (Map<String, Value>, Map<String, Value>) {
+pub(crate) fn split_features(
+    features: &Map<String, Value>,
+) -> (Map<String, Value>, Map<String, Value>) {
     let mut plain = Map::new();
     let mut extended = Map::new();
     for (name, value) in features {

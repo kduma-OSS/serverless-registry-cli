@@ -87,6 +87,70 @@ pub(crate) fn read_composer_json(path: &Path) -> Result<Option<Value>, Error> {
     Ok(Some(manifest))
 }
 
+/// Reads the `composer.json` of a prebuilt zip: at the root of the archive or, as in the
+/// dist archives of code hosts, inside its single top-level directory.
+///
+/// Every entry is read to the end, so that a truncated or corrupt archive is rejected
+/// here (the CRC of each entry is checked) and not when Composer installs it.
+pub(crate) fn read_prebuilt_composer_json(path: &Path) -> Result<Value, Error> {
+    let invalid = |message: String| {
+        Error::InvalidInput(format!(
+            "`{}` is not a valid Composer zip: {message}",
+            path.display()
+        ))
+    };
+    let mut archive = ZipArchive::new(File::open(path)?).map_err(|err| invalid(err.to_string()))?;
+    let mut names = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|err| invalid(err.to_string()))?;
+        names.push(entry.name().to_owned());
+        std::io::copy(&mut entry, &mut std::io::sink()).map_err(|err| invalid(err.to_string()))?;
+    }
+    let manifest_name = if names.iter().any(|name| name == "composer.json") {
+        "composer.json".to_owned()
+    } else {
+        let mut tops = names
+            .iter()
+            .filter_map(|name| name.split_once('/').map(|(top, _)| top))
+            .collect::<Vec<_>>();
+        tops.sort_unstable();
+        tops.dedup();
+        let nested = match tops.as_slice() {
+            [top]
+                if names
+                    .iter()
+                    .all(|name| name.starts_with(&format!("{top}/"))) =>
+            {
+                format!("{top}/composer.json")
+            }
+            _ => String::new(),
+        };
+        if !names.contains(&nested) {
+            return Err(invalid("it has no composer.json at its root".into()));
+        }
+        nested
+    };
+    let mut text = String::new();
+    archive
+        .by_name(&manifest_name)
+        .map_err(|err| invalid(err.to_string()))?
+        .read_to_string(&mut text)
+        .map_err(|err| invalid(format!("cannot read {manifest_name}: {err}")))?;
+    let manifest: Value = serde_json::from_str(&text).map_err(|err| {
+        Error::InvalidInput(format!(
+            "the archived composer.json is not valid JSON: {err}"
+        ))
+    })?;
+    if !manifest.is_object() {
+        return Err(Error::InvalidInput(
+            "the archived composer.json must contain a JSON object".into(),
+        ));
+    }
+    Ok(manifest)
+}
+
 /// One entry of the directory being zipped.
 struct Entry {
     /// Path inside the archive, `/`-separated, without a trailing `/`.

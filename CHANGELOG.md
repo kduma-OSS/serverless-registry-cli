@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-28
+
+### Added
+
+- `--archive <file>` for `sreg npm|composer|cargo|nuget publish`: publish an archive built
+  earlier (`.tgz`, `.zip`, `.crate`, `.nupkg`) byte for byte. The package, version and
+  dependencies are read from the manifest inside the archive; no git checkout and no
+  native packaging tool is needed, and tags in the current directory are ignored.
+  `--version` is a consistency check (for a Composer archive without a `version`, the
+  version to publish). The archive is validated completely before the first request;
+  `--tag-prefix`, project and workspace selectors and arguments after `--` are rejected
+  together with it. Authentication, `--dry-run`, `--skip-existing` and `--json` work as
+  before.
+- `sreg cargo publish --archive … --source-registry-index <url>`: dependencies that refer
+  to the given (retired) registry index are described in the sparse index as
+  dependencies from this registry (`registry: null`), without changing the archive;
+  dependencies from other registries keep their identity.
+
 ## [0.1.2] - 2026-10-28
 
 ### Changed
@@ -179,7 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `/` encoded as `%2F` (`/generic/acme%2Fplugin-foo/latest`), as the API contract
   requires.
 
-[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kduma-OSS/serverless-registry-cli/releases/tag/v0.1.0

@@ -15,8 +15,8 @@ use std::path::Path;
 use serde_json::Value;
 use sreg_core::git::Git;
 use sreg_core::{
-    CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions, Packager, SystemRunner,
-    Workdir,
+    ArchiveOptions, CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions,
+    Packager, SystemRunner, Workdir,
 };
 
 pub use validate::{validate_name, validate_version};
@@ -46,6 +46,47 @@ impl<R: CommandRunner> ComposerPackager<R> {
 impl<R: CommandRunner> Packager for ComposerPackager<R> {
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Composer
+    }
+
+    /// Describes a zip built earlier from the `composer.json` inside it.
+    ///
+    /// The version is the one `composer.json` declares; `--version` must agree with it,
+    /// or supplies it when `composer.json` has none. Nothing is rewritten.
+    fn package_archive(&self, opts: &ArchiveOptions) -> Result<Package, Error> {
+        let manifest = archive::read_prebuilt_composer_json(&opts.path)?;
+        let name = manifest_name(&manifest)?;
+        let version = match (manifest.get("version"), &opts.version) {
+            (Some(Value::String(declared)), Some(requested)) if declared != requested => {
+                return Err(Error::InvalidInput(format!(
+                    "the archived composer.json declares version {declared}, but --version \
+                     {requested} was given"
+                )))
+            }
+            (Some(Value::String(declared)), _) => declared.clone(),
+            (Some(declared), _) => {
+                return Err(Error::InvalidInput(format!(
+                    "the archived composer.json declares version {declared}, which is not a string"
+                )))
+            }
+            (None, Some(requested)) => requested.clone(),
+            (None, None) => {
+                return Err(Error::InvalidInput(
+                    "the archived composer.json declares no version; pass --version".into(),
+                ))
+            }
+        };
+        validate_version(&version)?;
+        let file_name = format!("{}-{version}.zip", short_name(&name));
+        let file = PackageFile::archive(&opts.path, file_name)?;
+        Ok(Package {
+            eco: Ecosystem::Composer,
+            name,
+            version,
+            files: vec![file],
+            manifest,
+            workdir: None,
+            notes: Vec::new(),
+        })
     }
 
     /// Reads and validates `composer.json` in `opts.path`, determines the version and

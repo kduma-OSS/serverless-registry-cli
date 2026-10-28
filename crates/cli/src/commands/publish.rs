@@ -87,6 +87,53 @@ pub async fn run_packager(
     .await
 }
 
+/// Publishes the archive at `archive`, built earlier, with `packager`.
+///
+/// The archive is described from the manifest inside it and uploaded as it is; no
+/// packaging tool runs and no git checkout is needed.
+#[cfg(any(
+    feature = "composer",
+    feature = "npm",
+    feature = "cargo",
+    feature = "nuget"
+))]
+pub async fn run_archive(
+    global: &GlobalArgs,
+    out: &Output,
+    packager: &dyn Packager,
+    args: &PublishArgs,
+    archive: &std::path::Path,
+    tag: Option<String>,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let eco = packager.ecosystem();
+    let opts = sreg_core::ArchiveOptions {
+        path: archive.to_path_buf(),
+        version: args.version.clone(),
+    };
+    let package = packager
+        .package_archive(&opts)
+        .with_context(|| format!("failed to read the {eco} archive {}", archive.display()))?;
+    for note in &package.notes {
+        eprintln!("note: {note}");
+    }
+    let options = PublishOptions {
+        dry_run: args.dry_run,
+        tag,
+        append: None,
+    };
+    publish_package(
+        global,
+        out,
+        &package,
+        options,
+        &args.oidc,
+        args.skip_existing,
+    )
+    .await
+}
+
 /// Publishes an already built `package`.
 ///
 /// The token is resolved only now, after packaging, so that a short-lived OIDC token
