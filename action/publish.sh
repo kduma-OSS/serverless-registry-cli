@@ -104,7 +104,16 @@ else
   [ -z "${INPUT_SCOPE:-}" ] || cmd+=(--scope "$INPUT_SCOPE")
 fi
 
-if [ -z "${REGISTRY_TOKEN:-}" ]; then
+# A registry URL with userinfo (https://<login>:<password>@host/) carries the token.
+url_has_credentials() {
+  [[ "${REGISTRY_URL:-}" =~ ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@ ]]
+}
+
+if [ -z "${REGISTRY_TOKEN:-}" ] && url_has_credentials; then
+  # The token comes from the registry URL.
+  unset REGISTRY_TOKEN
+  [ -z "${INPUT_OIDC_PROJECT:-}" ] || fail "'oidc-project' applies only to OIDC, not to credentials in 'registry'"
+elif [ -z "${REGISTRY_TOKEN:-}" ]; then
   # No token: authenticate with the job's OIDC token instead.
   unset REGISTRY_TOKEN
   [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] ||

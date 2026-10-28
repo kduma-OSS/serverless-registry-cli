@@ -12,12 +12,16 @@ inputs:
     description: "Ecosystem to publish: composer, npm, cargo, nuget, generic, swift or maven."
     required: true
   registry:
-    description: "Base URL of the registry, e.g. https://packages.example.com (REGISTRY_URL)."
+    description: >-
+      Base URL of the registry, e.g. https://packages.example.com (REGISTRY_URL). It may
+      carry the token as https://<login>:<password>@packages.example.com; pass it from a
+      secret then.
     required: true
   token:
     description: >-
-      Publish token (REGISTRY_TOKEN). When empty, the action authenticates with a GitHub
-      Actions OIDC token (`--oidc`); the job then needs `permissions: id-token: write`.
+      Publish token (REGISTRY_TOKEN). When empty and `registry` carries no credentials,
+      the action authenticates with a GitHub Actions OIDC token (`--oidc`); the job then
+      needs `permissions: id-token: write`.
     required: false
     default: ""
   oidc-project:
