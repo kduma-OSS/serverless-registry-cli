@@ -50,3 +50,4 @@ time.workspace = true
 tokio.workspace = true
 toml.workspace = true
 wiremock.workspace = true
+zip.workspace = true

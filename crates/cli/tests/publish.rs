@@ -1,4 +1,4 @@
-//! `sreg <eco> publish` for the packagers that are not implemented yet.
+//! `sreg <eco> publish` failures that happen before the registry is contacted.
 
 mod common;
 
