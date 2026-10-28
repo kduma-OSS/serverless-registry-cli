@@ -76,3 +76,7 @@ predicates = "3.1.4"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# The profile that cargo-dist builds release binaries with
+[profile.dist]
+inherits = "release"
