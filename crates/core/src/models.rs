@@ -840,12 +840,49 @@ impl fmt::Debug for CreateCredentialResponse {
     }
 }
 
-/// `PATCH /api/v1/credentials/<project>/secrets/<hash-prefix>` request: the description of the
-/// entry and nothing else.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DescribeSecretRequest {
-    /// The new description; `None` (sent as `null`) clears it.
-    pub description: Option<String>,
+/// `PATCH /api/v1/credentials/<project>/secrets/<hash-prefix>` request: the description
+/// and/or the scope of the entry and nothing else. At least one field must be set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateSecretRequest {
+    /// The new description: `Some(Some(text))` sets it, `Some(None)` (sent as `null`) clears
+    /// it and `None` leaves it as it is.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub description: Option<Option<String>>,
+    /// The new, complete list of roles the secret may use: a non-empty list of unique roles
+    /// of the credential. `None` leaves it as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Vec<Kind>>,
+}
+
+impl UpdateSecretRequest {
+    /// Sets, or with `None` clears, the description.
+    pub fn description(description: Option<String>) -> Self {
+        Self {
+            description: Some(description),
+            scope: None,
+        }
+    }
+
+    /// Replaces the scope.
+    pub fn scope(scope: Vec<Kind>) -> Self {
+        Self {
+            description: None,
+            scope: Some(scope),
+        }
+    }
+}
+
+/// Keeps a present `null` apart from an absent field (`Some(None)` against `None`).
+fn present<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// `PATCH /api/v1/credentials/<project>` request.
@@ -859,7 +896,7 @@ pub struct UpdateGrantsRequest {
 /// optional, at least one must be set.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateCredentialRequest {
-    /// The new roles (`read` and/or `publish`; `admin` cannot be added or removed).
+    /// The new roles: any non-empty combination of `read`, `publish` and `admin`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles: Option<Vec<Kind>>,
     /// The new, complete list of `read` grants.
@@ -1357,19 +1394,37 @@ mod tests {
     }
 
     #[test]
-    fn describe_secret_request_sends_null_to_clear() {
-        let set = DescribeSecretRequest {
-            description: Some("note".into()),
-        };
+    fn update_secret_request_sends_only_what_is_set() {
         assert_eq!(
-            serde_json::to_value(&set).unwrap(),
+            serde_json::to_value(UpdateSecretRequest::description(Some("note".into()))).unwrap(),
             json!({ "description": "note" })
         );
-        let clear = DescribeSecretRequest { description: None };
         assert_eq!(
-            serde_json::to_value(&clear).unwrap(),
+            serde_json::to_value(UpdateSecretRequest::description(None)).unwrap(),
             json!({ "description": null })
         );
+        assert_eq!(
+            serde_json::to_value(UpdateSecretRequest::scope(vec![Kind::Read, Kind::Publish]))
+                .unwrap(),
+            json!({ "scope": ["read", "publish"] })
+        );
+        let both = UpdateSecretRequest {
+            description: Some(Some("laptop".into())),
+            scope: Some(vec![Kind::Admin]),
+        };
+        assert_eq!(
+            serde_json::to_value(both).unwrap(),
+            json!({ "description": "laptop", "scope": ["admin"] })
+        );
+    }
+
+    #[test]
+    fn update_secret_request_keeps_null_apart_from_absent() {
+        let request: UpdateSecretRequest = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(request, UpdateSecretRequest::default());
+        let request: UpdateSecretRequest =
+            serde_json::from_value(json!({ "description": null })).unwrap();
+        assert_eq!(request.description, Some(None));
     }
 
     #[test]

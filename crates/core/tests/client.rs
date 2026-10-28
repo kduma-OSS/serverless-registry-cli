@@ -3,7 +3,9 @@
 use std::time::Duration;
 
 use serde_json::json;
-use sreg_core::models::{AddSecretRequest, CreateCredentialRequest, Grant, Kind};
+use sreg_core::models::{
+    AddSecretRequest, CreateCredentialRequest, Grant, Kind, UpdateSecretRequest,
+};
 use sreg_core::retry::RetryPolicy;
 use sreg_core::{Client, Ecosystem, Error};
 use url::Url;
@@ -360,6 +362,20 @@ async fn credential_endpoints_use_documented_paths_and_bodies() {
         .expect(1)
         .mount(&server)
         .await;
+    Mock::given(method("PATCH"))
+        .and(path(
+            "/api/v1/credentials/shop-frontend/secrets/3f9a1c0b7d2e",
+        ))
+        .and(body_json(
+            json!({ "description": null, "scope": ["read", "publish"] }),
+        ))
+        .respond_with(ok(json!({
+            "secret": { "id": "3f9a1c0b7d2e", "type": "key", "created": "2026-10-28T09:00:00Z",
+                        "expires": null, "scope": ["read", "publish"] }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
     Mock::given(method("DELETE"))
         .and(path(
             "/api/v1/credentials/shop-frontend/secrets/3f9a1c0b7d2e",
@@ -407,6 +423,18 @@ async fn credential_endpoints_use_documented_paths_and_bodies() {
         described.secret.description.as_deref(),
         Some("CI of the shop")
     );
+    let rescoped = client
+        .update_secret(
+            "shop-frontend",
+            "3f9a1c0b7d2e",
+            &UpdateSecretRequest {
+                description: Some(None),
+                scope: Some(vec![Kind::Read, Kind::Publish]),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(rescoped.secret.scope, [Kind::Read, Kind::Publish]);
     let expired = client
         .expire_secret(
             "shop-frontend",

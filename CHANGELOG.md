@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sreg login --yank`, `--delete` and `--delete-package` ask the registry for a short-lived
   admin token that may yank or delete exactly the listed versions or packages (needs a
   registry that supports the `yank` and `delete` login purposes, `docs/api.md` 6.20).
+- The client can replace the `scope` of a secret: `Client::update_secret` sends
+  `PATCH …/secrets/<id>` with a description and/or a scope (`UpdateSecretRequest`);
+  `describe_secret` keeps working and sends only the description.
 
 ## [0.2.1] - 2026-10-28
 
