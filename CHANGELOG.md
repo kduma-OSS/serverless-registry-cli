@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-28
+
 ### Changed
 
 - `sreg login --publish` no longer stops at 20 versions on its own: the registry decides, with
@@ -261,7 +263,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `/` encoded as `%2F` (`/generic/acme%2Fplugin-foo/latest`), as the API contract
   requires.
 
-[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.3...v0.1.4
