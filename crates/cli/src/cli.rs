@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use sreg_core::Ecosystem;
-use url::Url;
 
 /// Publish packages to Serverless Registry and configure package managers for it.
 #[derive(Parser)]
@@ -21,9 +20,17 @@ pub struct Cli {
 #[derive(Args)]
 #[command(next_help_heading = "Global options")]
 pub struct GlobalArgs {
-    /// Base URL of the registry, e.g. https://packages.example.com
-    #[arg(long, env = "REGISTRY_URL", value_name = "URL", global = true)]
-    pub registry: Option<Url>,
+    /// Base URL of the registry, e.g. https://packages.example.com; it may carry the
+    /// token as https://<login>:<password>@packages.example.com (percent-encoded)
+    // Parsed later by `RegistryUrl::parse`, so that errors never echo the credentials.
+    #[arg(
+        long,
+        env = "REGISTRY_URL",
+        hide_env_values = true,
+        value_name = "URL",
+        global = true
+    )]
+    pub registry: Option<String>,
 
     /// Registry token ([<source>.]<project>:[<type>.]<secret>)
     #[arg(
@@ -735,8 +742,8 @@ mod tests {
         assert!(cli.global.json);
         assert_eq!(cli.global.verbose, 2);
         assert_eq!(
-            cli.global.registry.map(String::from).as_deref(),
-            Some("https://packages.example.com/")
+            cli.global.registry.as_deref(),
+            Some("https://packages.example.com")
         );
     }
 

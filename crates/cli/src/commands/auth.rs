@@ -67,7 +67,7 @@ struct Variable {
 pub async fn run(global: &GlobalArgs, out: &Output, args: &AuthArgs) -> anyhow::Result<()> {
     let registry = context::registry(global)?;
     let eco = Ecosystem::from(args.eco);
-    let target = Target::new(eco, &registry, &args.registry_name)?;
+    let target = Target::new(eco, &registry.base, &args.registry_name)?;
     let token = context::token(global, &registry, args.oidc, args.project.as_deref()).await?;
     let login = Token::login(&token)?.to_owned();
 

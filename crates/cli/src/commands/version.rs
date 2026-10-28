@@ -17,8 +17,12 @@ struct Report {
 }
 
 pub async fn run(global: &GlobalArgs, out: &Output) -> anyhow::Result<()> {
+    // The version endpoint is anonymous: credentials in the URL are never sent.
     let registry = match &global.registry {
-        Some(url) => Some(context::anonymous_client(url.clone())?.version().await?),
+        Some(_) => {
+            let registry = context::registry(global)?;
+            Some(context::anonymous_client(registry.base)?.version().await?)
+        }
         None => None,
     };
     let compatible = registry
