@@ -16,15 +16,15 @@ The registry itself lives in the
 [`serverless-registry-worker`](https://github.com/kduma-OSS/serverless-registry-worker)
 repository.
 
-> **Work in progress.** The HTTP client, the publish flow, `whoami`, `auth`, `version`
-> and the generic commands work; packaging for Composer, npm, cargo and NuGet is not
-> implemented yet, so their `publish` commands exit with an error.
+> **Work in progress.** The HTTP client, the publish flow, `composer publish`, `whoami`,
+> `auth`, `version` and the generic commands work; packaging for npm, cargo and NuGet is
+> not implemented yet, so their `publish` commands exit with an error.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `sreg composer publish [--version <v>] [--path .]` | Archives the directory (`git archive HEAD`, honouring `export-ignore`, falling back to a zip of the directory without `vendor/` and `.git/`) and reads `composer.json`. The version comes from `--version` or the git tag (`v1.2.3` → `1.2.3`); it must be semver, `dev-*` versions are rejected. |
+| `sreg composer publish [--version <v>] [--path .]` | Archives the directory (`git archive HEAD`, honouring `export-ignore`, falling back to a zip of the directory without `vendor/` and `.git/`) and reads `composer.json`. The version comes from `--version` or the git tag of `HEAD` (`v1.2.3` → `1.2.3`); it must be semver with an optional `alpha`, `beta` or `rc` prerelease, `dev-*` versions are rejected. See [Publishing a Composer package](#publishing-a-composer-package). |
 | `sreg npm publish [--version <v>] [--tag <t>] [--path .]` | Runs `npm pack --json --pack-destination <tmp>` and reads the name, version and `package.json` from the tarball. `--version` is written into the manifest before packing. |
 | `sreg cargo publish [--version <v>] [--path .] [-- <args>]` | Runs `cargo package --no-verify --allow-dirty` (extra arguments are passed through) and reads the `.crate` file and metadata from `cargo metadata`. `--version` is written into the manifest before packaging. |
 | `sreg nuget publish [--version <v>] [--path .]` | Runs `dotnet pack` and reads the `.nuspec` from the `.nupkg`. `--version` is written into the manifest before packing. |
@@ -43,6 +43,66 @@ project instead of `REGISTRY_TOKEN`).
 Global options: `--registry <url>`, `--token <token>`, `--json` (machine-readable
 output only on stdout) and `-v`/`--verbose` (logs of `sreg` itself to stderr; tokens
 and presigned URLs are never logged).
+
+## Publishing a Composer package
+
+Tag the release and publish from the package directory (or point `--path` at it):
+
+```
+git tag v1.2.3
+sreg composer publish                    # publishes acme/sdk 1.2.3 from the tag
+sreg composer publish --version 1.2.4    # or name the version explicitly
+sreg composer publish --dry-run          # let the registry check everything, upload nothing
+```
+
+- **Name**: `name` in `composer.json` is required and must be a valid Composer name
+  (`vendor/package` in lower case).
+- **Version**: without `--version`, the tag pointing at `HEAD` is used
+  (`git describe --exact-match --tags HEAD`); a leading `v` is dropped, so both `v1.2.3`
+  and `1.2.3` give `1.2.3`. An untagged `HEAD` without `--version` is an error. Versions
+  are `MAJOR.MINOR.PATCH`, optionally followed by `-alpha`, `-beta` or `-rc` and a number
+  (`1.0.0-rc1`, `1.0.0-beta.2`); `dev-*` branches, other prerelease labels and build
+  metadata are rejected. If `composer.json` declares a `version`, it must be the one being
+  published; usually it is best left out.
+- **Archive**: inside a git repository, the archive is `git archive HEAD`: only committed
+  files are published and paths marked `export-ignore` in `.gitattributes` are left out.
+  `composer.json` must be committed and equal to the one on disk. A package in a
+  subdirectory of a repository is archived from that subdirectory. Keep development
+  files out of the archive like this:
+
+  ```
+  # .gitattributes
+  /tests              export-ignore
+  /.github            export-ignore
+  /.gitattributes     export-ignore
+  /phpunit.xml.dist   export-ignore
+  ```
+
+  Outside a git repository (or without `git` installed), the directory is zipped
+  instead, without `vendor/` and `.git`; `.gitattributes` is not consulted then.
+- The archive is uploaded as `<package>-<version>.zip` (`acme/sdk` 1.2.3 →
+  `sdk-1.2.3.zip`) and `composer.json` is sent as the version's manifest.
+
+In GitHub Actions, publish on tag pushes, with a token from a secret or with OIDC:
+
+```yaml
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # only for --oidc
+    steps:
+      - uses: actions/checkout@v4
+      # sreg must be on PATH, e.g. installed from the GitHub releases
+      - run: sreg composer publish --oidc --project acme-sdk
+        env:
+          REGISTRY_URL: https://packages.example.com
+```
 
 ## Configuration
 

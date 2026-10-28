@@ -28,8 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generic packages: `GenericPackager`, the generic feed and verified file downloads that
   never send the token to the storage.
 - `sreg composer|npm|cargo|nuget publish` wired to the publish flow with `--version`,
-  `--path`, `--dry-run`, `--oidc` and `--project` (`--tag` for npm); packaging itself is
-  not implemented yet.
+  `--path`, `--dry-run`, `--oidc` and `--project` (`--tag` for npm); packaging for npm,
+  cargo and nuget is not implemented yet.
+- Composer packaging (`sreg composer publish`): the name from `composer.json`, the
+  version from `--version` or the tag of `HEAD` (`v1.2.3` → `1.2.3`; releases and
+  `alpha`/`beta`/`rc` prereleases only, `dev-*` rejected), the archive from
+  `git archive HEAD` honouring `export-ignore` (the committed `composer.json` must match
+  the one on disk) or, outside git, a deterministic zip of the directory without
+  `vendor/` and `.git`; uploaded as `<package>-<version>.zip` with `composer.json` as the
+  manifest.
+- `CommandRunner` abstraction for packagers that run external tools, and temporary work
+  directories owned by the packages they belong to.
 - `sreg generic publish` and `sreg generic get`.
 - `sreg whoami`, `sreg version` and `sreg auth <composer|npm|cargo|nuget>` (see
   `docs/cli-auth.md`), with text and `--json` output.
@@ -38,5 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cargo features `composer`, `npm`, `cargo`, `nuget` and `generic` (all on by default).
 - CI workflow running fmt, clippy, tests, an MSRV check, a single-ecosystem build and
   release builds.
+
+### Fixed
+
+- Grouped generic package names are sent to the generic feed as one path segment with
+  the `/` encoded as `%2F` (`/generic/acme%2Fplugin-foo/latest`), as the API contract
+  requires.
 
 [Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/commits/main
