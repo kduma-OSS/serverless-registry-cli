@@ -5,9 +5,11 @@
 everything else (binaries, checksums, installers, the GitHub Release) is produced by the
 `Release` workflow (`.github/workflows/release.yml`). Releases are cut with the manual
 **Bump and release** workflow (`.github/workflows/bump-and-release.yml`), which sets the
-version, rolls the changelog, tags and starts the `Release` workflow. The composite
-GitHub Action in `action/` installs those release binaries; the release commit points it
-at the new version.
+version, rolls the changelog, tags and starts the `Release` workflow. The GitHub Action,
+[`kduma-OSS/serverless-registry-publish-action`](https://github.com/kduma-OSS/serverless-registry-publish-action),
+lives in its own repository and is released on its own; it installs these release
+binaries, and a stable CLI release makes it release itself with the new version as its
+default ([below](#releasing-the-github-action)).
 
 ## What a release produces
 
@@ -83,9 +85,7 @@ Every computed version must not have a tag yet.
 2. Computes the version with `scripts/bump-version.mjs` and fails when its tag exists.
 3. Applies it: `[workspace.package] version` and the internal crates in
    `[workspace.dependencies]` of `Cargo.toml`, the workspace packages in `Cargo.lock`
-   (then `cargo metadata`, which corrects the lock should anything be missing), and
-   `action/VERSION` (`v<version>`), so the action installs the new release as soon as it
-   is published.
+   (then `cargo metadata`, which corrects the lock should anything be missing).
 4. Rolls `CHANGELOG.md`: the `[Unreleased]` entries move under
    `## [<version>] - <today>` (UTC), an empty `[Unreleased]` stays above, and the links at
    the bottom are updated (`[Unreleased]` compares from the new tag, the new version
@@ -141,7 +141,7 @@ changes anything, and says so.
 node scripts/bump-version.mjs prerelease            # prints the next version
 node scripts/bump-version.mjs custom 0.2.0-rc.1     # with bump custom
 node scripts/bump-version.mjs patch --dry-run       # also prints every change it would make
-node scripts/bump-version.mjs patch --apply         # rewrites Cargo.toml, Cargo.lock, action/VERSION, CHANGELOG.md
+node scripts/bump-version.mjs patch --apply         # rewrites Cargo.toml, Cargo.lock, CHANGELOG.md
 node scripts/bump-version.mjs --current             # the current version
 ```
 
@@ -153,25 +153,68 @@ node scripts/bump-version.mjs --current             # the current version
 
 1. **Check the `Release` run** linked from the summary. A failed build can be re-run
    from the Actions tab; the tag and the release commit stay as they are.
-2. **Move the action's major tag.** The action is used as
-   `kduma-OSS/serverless-registry-cli/action@v1`. `v1` is a moving tag on the release
-   commit (which also updated `action/VERSION`):
-
-   ```
-   git fetch origin --tags
-   git tag -f v1 v<version>^{commit}
-   git push -f origin v1
-   ```
-
-   This is the only tag that is ever moved. Move it only while the action's inputs and
-   outputs stay compatible; an incompatible change to the action starts `v2` (and the
-   READMEs are updated to it). `v1` does not match the release workflow's trigger
-   (it needs a full `X.Y.Z` version), so moving it builds nothing. Moving it to a
-   prerelease points every `@v1` user at that prerelease; usually move it for stable
-   releases only.
+2. **Check the action release.** For a stable release, the `Release` workflow ends with
+   the `custom-release-action` job, which starts the action's release with the new
+   version as its default `sreg-version` ([below](#releasing-the-github-action)). Its
+   summary links the action's Release workflow; if it only printed a notice, the action
+   repository picks the release up within an hour.
 3. **Check the result.** Run the shell installer from the new release, check
-   `sreg --version`, and let a workflow that uses `@v1` publish (or `dry-run: true`) a
+   `sreg --version`, and, once the action is released, let a workflow that uses
+   `kduma-OSS/serverless-registry-publish-action@v1` publish (or `dry-run: true`) a
    package to a test registry.
+
+## Releasing the GitHub Action
+
+The action
+([`kduma-OSS/serverless-registry-publish-action`](https://github.com/kduma-OSS/serverless-registry-publish-action))
+has its own versions, changelog and release workflow; `@v1` follows its latest 1.x
+release. The `sreg` release it installs by default is the `default:` of its
+`sreg-version` input, so a new CLI release reaches `@v1` users only through a release of
+the action. That release happens on its own for every stable CLI release (prereleases are
+skipped), in two ways:
+
+1. **Push (immediate).** `dist-workspace.toml` declares the cargo-dist custom job
+   `post-announce-jobs = ["./release-action"]`, so the generated `release.yml` calls
+   `.github/workflows/release-action.yml` (with the dist plan) after the GitHub Release is
+   announced. That job reads the tag from the plan (falling back to `github.ref_name`),
+   mints a token with `actions/create-github-app-token` and runs
+
+   ```
+   gh workflow run release.yml -R kduma-OSS/serverless-registry-publish-action \
+     -f sreg-version=v<version> -f bump=patch -f only-if-newer-sreg=true
+   ```
+
+   When the App is not configured (e.g. in a fork) it prints a notice and succeeds;
+   when minting the token or the dispatch fails it prints a warning and still succeeds,
+   since the release itself is already published.
+2. **Hourly sync (fallback, no token).** The action repository's
+   `sync-cli-release.yml` checks the newest stable CLI release every hour and releases
+   the action when it is newer than the default. This covers a dispatch that is not
+   configured or failed.
+
+Either way the action's own `GITHUB_TOKEN` makes the release commit, the tag, the GitHub
+release and moves `v1`; `only-if-newer-sreg` makes the second trigger a no-op. By hand:
+run the action repository's **Release** workflow with `sreg-version` (that is also the
+only way to make a CLI prerelease the default). See the action's
+[`docs/releasing.md`](https://github.com/kduma-OSS/serverless-registry-publish-action/blob/main/docs/releasing.md).
+
+### The GitHub App for the push
+
+Set up once; no personal access token is involved.
+
+1. Create a GitHub App for the `kduma-OSS` organization (**Settings** → **Developer
+   settings** → **GitHub Apps** → **New GitHub App**), named e.g. "Serverless Registry
+   Release", with this repository as its homepage URL. Untick **Webhook** → **Active**
+   (no webhook). Repository permissions: **Actions: Read and write** and **Metadata:
+   Read-only** (the default); nothing else.
+2. Install it on `kduma-OSS` with **Only select repositories** →
+   `kduma-OSS/serverless-registry-publish-action` (not on this repository).
+3. Generate a private key on the App's page (a `.pem` file is downloaded).
+4. In this repository (**Settings** → **Secrets and variables** → **Actions**), add the
+   App ID as the repository **variable** `RELEASE_APP_ID` and the contents of the `.pem`
+   file as the repository **secret** `RELEASE_APP_PRIVATE_KEY`.
+
+The App can only start workflows in the action repository; it cannot push there.
 
 ## Releasing by hand
 
@@ -200,8 +243,8 @@ section 3):
 What this means for releases:
 
 - **The Worker raises `minClientVersion` only after a CLI release that satisfies it
-  exists.** Release the CLI first, update the action (`action/VERSION` and `v1`), then
-  release the Worker with the new minimum. Otherwise every pipeline using the action
+  exists.** Release the CLI first, let the action release itself with the new default (or run
+  its Release workflow), then release the Worker with the new minimum. Otherwise every pipeline using the action
   fails with exit code `3` until a new CLI is published.
 - A CLI release must keep working with Workers that are still on the previous minor
   version: the Worker keeps the previous API version (`/api/v1`) for at least one minor
