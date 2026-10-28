@@ -17,9 +17,30 @@ pub const VERSION_EXISTS: u8 = 2;
 /// This client is older than the minimum version the registry accepts.
 pub const CLIENT_TOO_OLD: u8 = 3;
 
+/// Where newer releases of `sreg` are published.
+pub const RELEASES_URL: &str = "https://github.com/kduma-OSS/serverless-registry-cli/releases";
+
+/// Finds the library error inside an error chain.
+fn core_error(err: &anyhow::Error) -> Option<&Error> {
+    err.chain().find_map(|cause| cause.downcast_ref::<Error>())
+}
+
+/// An extra line printed after the error message, if any.
+pub fn hint_for(err: &anyhow::Error) -> Option<String> {
+    match core_error(err) {
+        Some(Error::ClientTooOld { min }) => {
+            Some(format!("download sreg {min} or newer from {RELEASES_URL}"))
+        }
+        Some(Error::VersionExists) => {
+            Some("published versions are immutable; bump the version to publish again".into())
+        }
+        _ => None,
+    }
+}
+
 /// Maps an error to the exit code the process should terminate with.
 pub fn code_for(err: &anyhow::Error) -> u8 {
-    match err.chain().find_map(|cause| cause.downcast_ref::<Error>()) {
+    match core_error(err) {
         Some(Error::VersionExists) => VERSION_EXISTS,
         Some(Error::ClientTooOld { .. }) => CLIENT_TOO_OLD,
         _ => FAILURE,
@@ -52,6 +73,17 @@ mod tests {
             .context("publishing acme/sdk 1.0.0")
             .unwrap_err();
         assert_eq!(code_for(&err), VERSION_EXISTS);
+    }
+
+    #[test]
+    fn client_too_old_hint_names_the_minimum_and_the_releases() {
+        let err = anyhow::Error::new(Error::ClientTooOld {
+            min: "1.2.0".into(),
+        });
+        let hint = hint_for(&err).unwrap();
+        assert!(hint.contains("1.2.0"));
+        assert!(hint.contains(RELEASES_URL));
+        assert_eq!(hint_for(&anyhow::anyhow!("boom")), None);
     }
 
     #[test]

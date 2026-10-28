@@ -1560,10 +1560,17 @@ dependencies = [
  "assert_cmd",
  "clap",
  "predicates",
+ "semver",
+ "serde",
+ "serde_json",
  "sreg-core",
+ "tempfile",
+ "time",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "url",
+ "wiremock",
 ]
 
 [[package]]

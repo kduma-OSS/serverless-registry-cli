@@ -37,14 +37,38 @@ fn version_prints_package_version() {
 }
 
 #[test]
-fn unimplemented_commands_fail_with_generic_error() {
+fn missing_registry_is_a_generic_error() {
     cargo_bin_cmd!("sreg")
         .arg("whoami")
         .env_remove("REGISTRY_URL")
         .env_remove("REGISTRY_TOKEN")
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("not implemented"));
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("REGISTRY_URL"));
+}
+
+#[test]
+fn missing_token_is_a_generic_error() {
+    cargo_bin_cmd!("sreg")
+        .args(["whoami", "--registry", "http://127.0.0.1:9"])
+        .env_remove("REGISTRY_TOKEN")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("REGISTRY_TOKEN"));
+}
+
+#[test]
+fn version_subcommand_prints_client_version_offline() {
+    cargo_bin_cmd!("sreg")
+        .arg("version")
+        .env_remove("REGISTRY_URL")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(concat!(
+            "sreg ",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 #[test]
