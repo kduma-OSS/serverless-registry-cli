@@ -1648,16 +1648,22 @@ one returned with the session (`401 unauthorized` otherwise). Responses:
 
 ### 6.22 `PATCH /api/v1/credentials/<project>/secrets/<hash-prefix>`
 
-Role `admin`. Sets or clears the description of one auth entry, and nothing else (`expires` and
-the `id` do not change):
+Role `admin`. Sets or clears the description of one auth entry and/or replaces its `scope`, and
+changes nothing else (`expires` and the `id` do not change):
 
 ```json
-{ "description": "Jane's laptop" }
+{ "description": "Jane's laptop", "scope": ["read", "publish"] }
 ```
 
-`description` is required: a string (trimmed, at most 200 characters, no control characters)
-or `null`; blank or `null` clears it. Any other field is `400 invalid_request`. Response
-`200`: `{ "secret": <AuthEntry> }`. Errors: `400 invalid_request`, `404 not_found`.
+At least one of the two is required. `description` is a string (trimmed, at most 200
+characters, no control characters) or `null`; blank or `null` clears it. `scope` is a
+non-empty list of unique roles within the credential's roles (6.17): it replaces the whole
+list and takes effect on the next request with that secret, and for a panel session started with
+a `login` it takes effect at once. It is `400 invalid_request` for an `admin` credential, for
+an empty or unknown list, and for a `gh` entry whose claims and new scope are identical to
+another active `gh` entry. Giving a secret the `publish` role lets whoever holds it publish, so
+clients should confirm it. Any other field is `400 invalid_request`. Response `200`:
+`{ "secret": <AuthEntry> }`. Errors: `400 invalid_request`, `404 not_found`.
 
 ### 6.19 `GET /api/v1/github/repository?name=<owner/repo>`
 
