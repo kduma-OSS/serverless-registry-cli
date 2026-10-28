@@ -73,6 +73,7 @@ impl Downloader {
 
         let attempts = self.retry.attempts.max(1);
         let mut attempt = 1;
+        let mut renewed = false;
         loop {
             let result = self.attempt(&url, file, &partial).await;
             let err = match result {
@@ -80,6 +81,13 @@ impl Downloader {
                 Err(err) => err,
             };
             let _ = std::fs::remove_file(&partial);
+            // A presigned URL that expired before the download started answers `403`:
+            // ask the registry for a new one, once per file (docs/api.md 7.4).
+            if is_storage_forbidden(&err) && !renewed {
+                renewed = true;
+                tracing::debug!(file = %file.name, "storage refused the download URL; requesting a new one");
+                continue;
+            }
             let retryable = match &err {
                 Error::Http(_) => true,
                 Error::Api { status, .. } => *status >= 500,
@@ -205,12 +213,20 @@ impl Downloader {
             }
             return Err(Error::Api {
                 status: status.as_u16(),
-                code: "storage_error".into(),
+                code: STORAGE_ERROR.into(),
                 message: format!("the storage answered {status} for the download"),
             });
         }
         Err(Error::InvalidInput("too many redirects".into()))
     }
+}
+
+/// Code of the error for a non-`200` answer of the storage host.
+const STORAGE_ERROR: &str = "storage_error";
+
+/// Whether the storage host answered `403`, e.g. for an expired presigned URL.
+fn is_storage_forbidden(err: &Error) -> bool {
+    matches!(err, Error::Api { status: 403, code, .. } if code == STORAGE_ERROR)
 }
 
 fn integrity(file: &GenericFeedFile, detail: String) -> Error {

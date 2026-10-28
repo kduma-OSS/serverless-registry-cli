@@ -237,3 +237,58 @@ async fn storage_server_errors_are_retried() {
 
     assert_eq!(std::fs::read(path).unwrap(), CONTENT);
 }
+
+/// A registry whose download endpoint redirects to `storage`, which answers `403` (an
+/// expired presigned URL) the first `forbidden` times and then serves the content.
+async fn expiring_servers(forbidden: u64) -> (MockServer, MockServer) {
+    let registry = MockServer::start().await;
+    let storage = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(302).insert_header(
+            "location",
+            format!("{}/bucket/cli-linux.tar.gz", storage.uri()).as_str(),
+        ))
+        .mount(&registry)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(403))
+        .up_to_n_times(forbidden)
+        .mount(&storage)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(CONTENT))
+        .mount(&storage)
+        .await;
+    (registry, storage)
+}
+
+#[tokio::test]
+async fn an_expired_download_url_is_requested_again_once() {
+    let (registry, _storage) = expiring_servers(1).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let path = Downloader::new(&client(&registry))
+        .unwrap()
+        .download(&feed_file(&registry, CONTENT_SHA256), dir.path())
+        .await
+        .unwrap();
+
+    assert_eq!(std::fs::read(path).unwrap(), CONTENT);
+    assert_eq!(registry.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_second_storage_refusal_is_fatal() {
+    let (registry, _storage) = expiring_servers(2).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let err = Downloader::new(&client(&registry))
+        .unwrap()
+        .download(&feed_file(&registry, CONTENT_SHA256), dir.path())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::Api { status: 403, .. }), "{err:?}");
+    assert_eq!(registry.received_requests().await.unwrap().len(), 2);
+    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+}
