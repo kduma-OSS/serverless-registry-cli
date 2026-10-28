@@ -533,6 +533,8 @@ pub enum SecretType {
     Key,
     /// A GitHub Actions OIDC token.
     Gh,
+    /// A password, with an optional one-time code, used in a browser (never sent as a token).
+    Login,
     /// A type introduced by a newer registry.
     #[serde(other)]
     Other,
@@ -544,6 +546,7 @@ impl SecretType {
         match self {
             SecretType::Key => "key",
             SecretType::Gh => "gh",
+            SecretType::Login => "login",
             SecretType::Other => "other",
         }
     }
@@ -571,6 +574,12 @@ pub struct AuthEntry {
     /// predates credential roles (the entry then has the credential's single role).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<Kind>,
+    /// A note about the entry (at most 200 characters); `None` when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// `login` only: whether a one-time code is required besides the password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub totp: Option<bool>,
     /// `gh` only: `owner/repo` matched against the JWT.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
@@ -655,6 +664,18 @@ pub struct AddSecretRequest {
     /// `publish`; omitted otherwise.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<Kind>,
+    /// A note about the entry (at most 200 characters).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// `login` only: the password; the registry generates one when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// `login` only: also require a one-time code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub totp: Option<bool>,
+    /// `gh` only: the `id` of a `gh` entry that expires now while this one is added (an edit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<String>,
     /// `gh` only: `owner/repo`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
@@ -673,10 +694,42 @@ impl AddSecretRequest {
             secret_type: SecretType::Key,
             expires,
             scope: Vec::new(),
+            description: None,
+            password: None,
+            totp: None,
+            replaces: None,
             repository: None,
             git_ref: None,
             workflow: None,
         }
+    }
+}
+
+/// What the registry shows once when a `login` entry is created.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoginReveal {
+    /// The password, chosen or generated; never returned again.
+    pub password: String,
+    /// The one-time code enrolment, when the entry has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub totp: Option<TotpReveal>,
+}
+
+/// The shared secret of a one-time code, as shown once.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TotpReveal {
+    /// The base32 shared secret.
+    pub secret: String,
+    /// The `otpauth://` link authenticator apps import.
+    pub otpauth_uri: String,
+}
+
+impl fmt::Debug for LoginReveal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoginReveal")
+            .field("password", &"<redacted>")
+            .field("totp", &self.totp.as_ref().map(|_| "<redacted>"))
+            .finish()
     }
 }
 
@@ -688,6 +741,9 @@ pub struct AddSecretResponse {
     /// The full token; present only for `key` entries and never returned again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    /// The password and one-time code enrolment; present only for `login` entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login: Option<LoginReveal>,
 }
 
 impl fmt::Debug for AddSecretResponse {
@@ -695,6 +751,7 @@ impl fmt::Debug for AddSecretResponse {
         f.debug_struct("AddSecretResponse")
             .field("secret", &self.secret)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("login", &self.login)
             .finish()
     }
 }
@@ -767,6 +824,10 @@ pub struct CreateCredentialResponse {
     /// The full token; present only when the first secret is a `key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    /// The password and one-time code enrolment; present only when the first secret is a
+    /// `login`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login: Option<LoginReveal>,
 }
 
 impl fmt::Debug for CreateCredentialResponse {
@@ -774,8 +835,17 @@ impl fmt::Debug for CreateCredentialResponse {
         f.debug_struct("CreateCredentialResponse")
             .field("credential", &self.credential)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("login", &self.login)
             .finish()
     }
+}
+
+/// `PATCH /api/v1/credentials/<project>/secrets/<hash-prefix>` request: the description of the
+/// entry and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DescribeSecretRequest {
+    /// The new description; `None` (sent as `null`) clears it.
+    pub description: Option<String>,
 }
 
 /// `PATCH /api/v1/credentials/<project>` request.
@@ -1209,6 +1279,100 @@ mod tests {
     }
 
     #[test]
+    fn auth_entries_carry_a_description_and_the_login_type() {
+        let list: CredentialList = serde_json::from_value(json!({
+            "credentials": [{
+                "project": "ops",
+                "kind": "admin",
+                "auth": [
+                    { "id": "5d3b8e21c7f0", "type": "login", "totp": true, "description": "Ops lead",
+                      "created": "2026-10-28T09:00:00Z", "expires": null },
+                    { "id": "3f9a1c0b7d2e", "type": "key", "description": null,
+                      "created": "2026-10-28T09:00:00Z", "expires": null },
+                    { "id": "c08e5b1f9a27", "type": "gh", "repository": "acme/shop",
+                      "created": "2026-10-28T09:05:00Z", "expires": null }
+                ],
+                "grants": []
+            }]
+        }))
+        .unwrap();
+        let auth = &list.credentials[0].auth;
+        assert_eq!(auth[0].secret_type, SecretType::Login);
+        assert_eq!(auth[0].totp, Some(true));
+        assert_eq!(auth[0].description.as_deref(), Some("Ops lead"));
+        assert_eq!(auth[1].description, None);
+        assert_eq!(auth[2].description, None);
+        assert_eq!(SecretType::Login.as_str(), "login");
+    }
+
+    #[test]
+    fn add_secret_request_serializes_the_new_fields_only_when_set() {
+        let mut request = AddSecretRequest::key(None);
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            json!({ "type": "key" })
+        );
+        request.secret_type = SecretType::Login;
+        request.password = Some("correct-horse-battery".into());
+        request.totp = Some(true);
+        request.description = Some("Jane".into());
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            json!({
+                "type": "login",
+                "description": "Jane",
+                "password": "correct-horse-battery",
+                "totp": true
+            })
+        );
+        let mut edit = AddSecretRequest::key(None);
+        edit.secret_type = SecretType::Gh;
+        edit.repository = Some("acme/shop".into());
+        edit.replaces = Some("c08e5b1f9a27".into());
+        assert_eq!(
+            serde_json::to_value(&edit).unwrap(),
+            json!({ "type": "gh", "replaces": "c08e5b1f9a27", "repository": "acme/shop" })
+        );
+    }
+
+    #[test]
+    fn a_login_reveal_is_parsed_and_never_printed() {
+        let response: AddSecretResponse = serde_json::from_value(json!({
+            "secret": { "id": "5d3b8e21c7f0", "type": "login", "totp": true,
+                        "created": "2026-10-28T09:10:00Z", "expires": null },
+            "login": {
+                "password": "Hq3vN8xZk1Lp6RtY0wUe5mCa",
+                "totp": { "secret": "JBSWY3DPEHPK3PXP",
+                          "otpauth_uri": "otpauth://totp/registry:ops?secret=JBSWY3DPEHPK3PXP" }
+            }
+        }))
+        .unwrap();
+        let login = response.login.as_ref().unwrap();
+        assert_eq!(login.password, "Hq3vN8xZk1Lp6RtY0wUe5mCa");
+        assert_eq!(login.totp.as_ref().unwrap().secret, "JBSWY3DPEHPK3PXP");
+        let shown = format!("{response:?}");
+        for secret in ["Hq3vN8xZk1Lp6RtY0wUe5mCa", "JBSWY3DPEHPK3PXP"] {
+            assert!(!shown.contains(secret), "{shown}");
+        }
+    }
+
+    #[test]
+    fn describe_secret_request_sends_null_to_clear() {
+        let set = DescribeSecretRequest {
+            description: Some("note".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&set).unwrap(),
+            json!({ "description": "note" })
+        );
+        let clear = DescribeSecretRequest { description: None };
+        assert_eq!(
+            serde_json::to_value(&clear).unwrap(),
+            json!({ "description": null })
+        );
+    }
+
+    #[test]
     fn auth_entry_activity_follows_expiry() {
         let now = parse_timestamp("2026-10-28T10:00:00Z").unwrap();
         let mut entry = AuthEntry {
@@ -1217,6 +1381,8 @@ mod tests {
             created: "2026-10-28T09:00:00Z".into(),
             expires: None,
             scope: Vec::new(),
+            description: None,
+            totp: None,
             repository: None,
             git_ref: None,
             workflow: None,

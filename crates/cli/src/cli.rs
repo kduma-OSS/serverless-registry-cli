@@ -46,6 +46,17 @@ pub struct GlobalArgs {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// With --login: print the approval page instead of opening it in a browser
+    // The variable takes the usual spellings (`1`, `true`, `yes`; `0`, `false` turn it off).
+    #[arg(
+        long,
+        env = "SREG_NO_BROWSER",
+        global = true,
+        action = ArgAction::SetTrue,
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
+    pub no_browser: bool,
+
     /// Increase log verbosity (-v for debug, -vv for trace); logs go to stderr
     #[arg(short, long, action = ArgAction::Count, global = true)]
     pub verbose: u8,
@@ -108,6 +119,9 @@ pub enum Command {
     /// Write registry credentials for a package manager or print them for export
     Auth(AuthArgs),
 
+    /// Sign in through the browser and print a short-lived token to export
+    Login(LoginArgs),
+
     /// Show the version of sreg and, with --registry, of the registry
     Version,
 }
@@ -150,6 +164,7 @@ impl Command {
             } => "maven publish",
             Command::Whoami => "whoami",
             Command::Auth(_) => "auth",
+            Command::Login(_) => "login",
             Command::Version => "version",
         }
     }
@@ -175,6 +190,10 @@ pub struct OidcArgs {
     /// finds the project from the repository the token was issued to)
     #[arg(long = "oidc-project", value_name = "PROJECT", requires = "oidc")]
     pub project: Option<String>,
+
+    /// Sign in through the browser and approve this operation, instead of REGISTRY_TOKEN
+    #[arg(long, conflicts_with = "oidc")]
+    pub login: bool,
 }
 
 /// Options shared by the `publish` commands of composer, npm, cargo, nuget, swift and
@@ -534,6 +553,11 @@ pub struct AuthArgs {
     #[arg(long, value_name = "PROJECT", requires = "oidc")]
     pub project: Option<String>,
 
+    /// Sign in through the browser and get a short-lived pull token, instead of
+    /// REGISTRY_TOKEN
+    #[arg(long, conflicts_with = "oidc")]
+    pub login: bool,
+
     /// Write the credentials to this file (auth.json, .npmrc, credentials.toml,
     /// nuget.config, .netrc or settings.xml) instead of printing them; an existing file
     /// is updated in place
@@ -544,6 +568,15 @@ pub struct AuthArgs {
     /// the Maven server (cargo, nuget and maven)
     #[arg(long, value_name = "NAME", default_value = "sreg")]
     pub registry_name: String,
+}
+
+#[derive(Args)]
+pub struct LoginArgs {
+    /// Ask for a publish token for this package version (repeatable), written
+    /// <ecosystem>:<package>@<version>, e.g. composer:acme/sdk@1.4.0 or npm:@acme/sdk@2.0.0;
+    /// without it the token is for downloading
+    #[arg(long = "publish", value_name = "ECO:PACKAGE@VERSION")]
+    pub publish: Vec<String>,
 }
 
 /// Ecosystem selector for positional arguments.

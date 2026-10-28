@@ -20,6 +20,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `sreg whoami` prints `Roles:` instead of `Kind:` (`--json` still has `kind`).
 
+## [0.1.5] - 2026-10-28
+
+### Fixed
+
+- The "Bump and release" workflow pushes the release commit and tag as the release GitHub App
+  (`SERVERLESS_REGISTRY_RELEASE_APP_ID` and `SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY`) when
+  they are set. A ruleset that requires status checks on `main` rejects the push made with
+  `GITHUB_TOKEN` (`GH013`, "Required status check is expected"); the App can be put on the
+  ruleset's bypass list. `RELEASE_TOKEN` still takes precedence, and without any of them the
+  workflow uses `GITHUB_TOKEN`.
+
+## [0.1.4] - 2026-10-28
+
+### Changed
+
+- The copies of `docs/api.md` and `docs/spec.md` describe the registry's `503 bucket_mismatch`
+  (an R2 bucket that is not the installation's own) and `POST /api/v1/bucket/accept`. The CLI
+  shows the registry's message for the error, like for any other.
+
+### Added
+
+- **Sign in through the browser.** `--login` on `sreg auth <eco>`, `sreg generic get` and every
+  `publish` command, and the new `sreg login [--publish <eco>:<package>@<version>]...`, open a
+  page of the registry where you sign in with a `login` secret (a password and an optional
+  one-time code) or just approve, and receive a short-lived token: a pull token, or a publish
+  token for exactly the package versions being published. `--no-browser` (or
+  `SREG_NO_BROWSER`) prints the page instead of opening it. Needs a registry with login
+  secrets (`docs/api.md` 2.6, 6.20, 6.21).
+- A `401` now suggests signing in again with `sreg login`.
+- The credential models know the `login` secret type and the new `description`, `totp`,
+  `password` and `replaces` fields, the one-time `login` reveal of a created secret, and
+  `Client::describe_secret` (`PATCH …/secrets/<id>`).
+
+### Security
+
+- Updated `sha2` (0.11.1, which brings `block-buffer` 0.12.1, GHSA-qwgh-2vcv-g2f7), `time` (0.3.55, RUSTSEC-2026-0009) and `zip` (9.1.3, RUSTSEC-2026-0367, -0368 and
+  -0369). The CLI only reads and writes archives and never extracts them.
+
+### Changed
+
+- The minimum supported Rust version is now 1.88, which the fixed `time` and `zip` need.
+
 ## [0.1.3] - 2026-10-28
 
 ### Added
@@ -210,7 +252,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `/` encoded as `%2F` (`/generic/acme%2Fplugin-foo/latest`), as the API contract
   requires.
 
-[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.0...v0.1.1

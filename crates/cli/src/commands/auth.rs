@@ -9,6 +9,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context};
 use serde::Serialize;
+use sreg_core::login::LoginPurpose;
 use sreg_core::token::Token;
 use sreg_core::Ecosystem;
 use url::Url;
@@ -68,7 +69,12 @@ pub async fn run(global: &GlobalArgs, out: &Output, args: &AuthArgs) -> anyhow::
     let registry = context::registry(global)?;
     let eco = Ecosystem::from(args.eco);
     let target = Target::new(eco, &registry.base, &args.registry_name)?;
-    let token = context::token(global, &registry, args.oidc, args.project.as_deref()).await?;
+    let token = if args.login {
+        let purpose = LoginPurpose::Pull { eco: Some(eco) };
+        crate::login::acquire(global, &purpose).await?.token
+    } else {
+        context::token(global, &registry, args.oidc, args.project.as_deref()).await?
+    };
     let login = Token::login(&token)?.to_owned();
 
     match &args.write {
@@ -411,7 +417,7 @@ fn validate_registry_name(name: &str, xml_name: bool) -> anyhow::Result<String> 
 }
 
 /// Quotes `value` for POSIX shells.
-fn shell_quote(value: &str) -> String {
+pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 

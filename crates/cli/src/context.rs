@@ -58,6 +58,31 @@ pub async fn client_with(
     Ok(Client::new(registry.base, Some(token), CLIENT_VERSION)?)
 }
 
+/// A client authenticated with a short-lived token the user approves in the browser.
+///
+/// The client gets the registry URL without its credentials.
+#[cfg(any(
+    feature = "composer",
+    feature = "npm",
+    feature = "cargo",
+    feature = "nuget",
+    feature = "generic",
+    feature = "swift",
+    feature = "maven"
+))]
+pub async fn client_with_login(
+    global: &GlobalArgs,
+    purpose: &sreg_core::login::LoginPurpose,
+) -> anyhow::Result<Client> {
+    let registry = registry(global)?;
+    let issued = crate::login::acquire(global, purpose).await?;
+    Ok(Client::new(
+        registry.base,
+        Some(issued.token),
+        CLIENT_VERSION,
+    )?)
+}
+
 /// A client without credentials, for `GET /api/v1/version`.
 pub fn anonymous_client(registry: Url) -> anyhow::Result<Client> {
     Ok(Client::new(registry, None, CLIENT_VERSION)?)

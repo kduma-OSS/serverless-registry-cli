@@ -108,7 +108,7 @@ feature gating or uses newer language features.
 
 ## Coding style
 
-- Rust 2021 edition, minimum Rust 1.85, `#![deny(unsafe_code)]` in every crate, no
+- Rust 2021 edition, minimum Rust 1.88, `#![deny(unsafe_code)]` in every crate, no
   `unwrap()` outside tests.
 - Errors use `thiserror` in library crates and `anyhow` only in the binary.
 - Keep crates small and dependency lists short; prefer `rustls` over native TLS.

@@ -3,6 +3,7 @@
 mod auth;
 #[cfg(feature = "generic")]
 mod generic;
+mod login;
 mod maven_settings;
 mod netrc;
 mod nuget_config;
@@ -45,6 +46,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Whoami => whoami::run(global, &out).await,
         Command::Version => version::run(global, &out).await,
         Command::Auth(args) => auth::run(global, &out, args).await,
+        Command::Login(args) => login::run(global, &out, args).await,
         #[cfg(feature = "composer")]
         Command::Composer {
             command: ComposerCommand::Publish(args),

@@ -10,6 +10,7 @@ pub mod digest;
 pub mod download;
 pub mod error;
 pub mod git;
+pub mod login;
 pub mod models;
 pub mod oidc;
 pub mod packager;

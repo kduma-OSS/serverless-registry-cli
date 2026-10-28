@@ -5,6 +5,7 @@
 
 mod common;
 
+use std::borrow::Cow;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -117,7 +118,11 @@ fn init_body(requests: &[Request]) -> Value {
 
 fn zip_names(bytes: &[u8]) -> Vec<String> {
     let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-    archive.file_names().map(str::to_owned).collect()
+    archive
+        .file_names()
+        .flatten()
+        .map(Cow::into_owned)
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread")]

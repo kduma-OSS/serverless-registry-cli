@@ -5,8 +5,9 @@ use std::path::Path;
 
 use anyhow::{bail, Context};
 use sreg_core::download::Downloader;
+use sreg_core::login::LoginPurpose;
 use sreg_core::publish::PublishOptions;
-use sreg_core::{Client, GenericQuery, PackageOptions, Packager};
+use sreg_core::{Client, Ecosystem, GenericQuery, PackageOptions, Packager};
 use sreg_eco_generic::{
     parse_key_value, parse_spec, validate_label, validate_name, validate_version, GenericFileSpec,
     GenericPackager,
@@ -151,7 +152,14 @@ pub async fn get(global: &GlobalArgs, out: &Output, args: &GenericGetArgs) -> an
         include_yanked: false,
     };
 
-    let client = context::client_with(global, args.oidc.oidc, args.oidc.project.as_deref()).await?;
+    let client = if args.oidc.login {
+        let purpose = LoginPurpose::Pull {
+            eco: Some(Ecosystem::Generic),
+        };
+        context::client_with_login(global, &purpose).await?
+    } else {
+        context::client_with(global, args.oidc.oidc, args.oidc.project.as_deref()).await?
+    };
     if args.sole {
         return get_sole(&client, out, args, requested, &query).await;
     }

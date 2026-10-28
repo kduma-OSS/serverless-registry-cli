@@ -1,6 +1,7 @@
 //! The `publish` commands: package, then `init`, upload and `commit`.
 
 use serde::Serialize;
+use sreg_core::login::{LoginPurpose, PublishScope};
 use sreg_core::models::PublishCommitResponse;
 use sreg_core::publish::{publish, PublishOptions, PublishOutcome};
 use sreg_core::{Ecosystem, Error, Package};
@@ -148,7 +149,19 @@ pub async fn publish_package(
     oidc: &OidcArgs,
     skip_existing: bool,
 ) -> anyhow::Result<()> {
-    let client = context::client_with(global, oidc.oidc, oidc.project.as_deref()).await?;
+    let client = if oidc.login {
+        let scope = PublishScope {
+            eco: package.eco,
+            package: package.name.clone(),
+            version: package.version.clone(),
+        };
+        let purpose = LoginPurpose::Publish {
+            scopes: vec![scope],
+        };
+        context::client_with_login(global, &purpose).await?
+    } else {
+        context::client_with(global, oidc.oidc, oidc.project.as_deref()).await?
+    };
     let outcome = match publish(&client, package, options).await {
         Ok(outcome) => outcome,
         Err(err @ (Error::VersionExists | Error::FileExists { .. })) if skip_existing => {

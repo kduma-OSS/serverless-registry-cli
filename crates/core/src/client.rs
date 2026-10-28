@@ -19,11 +19,11 @@ use crate::error::{Error, Result};
 use crate::models::{
     AddSecretRequest, AddSecretResponse, CreateCredentialRequest, CreateCredentialResponse,
     Credential, CredentialList, DeleteCredentialResponse, DeletePackageResponse,
-    DeleteVersionResponse, ErrorBody, ExpireSecretRequest, ExpireSecretResponse,
-    GenericAmbiguousBody, GenericFeedVersion, Grant, PackageEntry, PackageList,
-    PublishCommitRequest, PublishCommitResponse, PublishInitRequest, PublishInitResponse,
-    ReindexResponse, UpdateCredentialRequest, UpdateGrantsRequest, VersionInfo, Whoami,
-    YankResponse,
+    DeleteVersionResponse, DescribeSecretRequest, ErrorBody, ExpireSecretRequest,
+    ExpireSecretResponse, GenericAmbiguousBody, GenericFeedVersion, Grant, PackageEntry,
+    PackageList, PublishCommitRequest, PublishCommitResponse, PublishInitRequest,
+    PublishInitResponse, ReindexResponse, UpdateCredentialRequest, UpdateGrantsRequest,
+    VersionInfo, Whoami, YankResponse,
 };
 use crate::packager::Ecosystem;
 use crate::retry::{is_retryable, RetryPolicy};
@@ -400,6 +400,19 @@ impl Client {
         request: &AddSecretRequest,
     ) -> Result<AddSecretResponse> {
         self.post(&["credentials", project, "secrets"], Some(request))
+            .await
+    }
+
+    /// `PATCH /api/v1/credentials/<project>/secrets/<hash-prefix>`: sets, or with `None` clears,
+    /// the description of an entry.
+    pub async fn describe_secret(
+        &self,
+        project: &str,
+        id: &str,
+        description: Option<String>,
+    ) -> Result<ExpireSecretResponse> {
+        let body = DescribeSecretRequest { description };
+        self.patch(&["credentials", project, "secrets", id], &body)
             .await
     }
 

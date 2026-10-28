@@ -104,9 +104,10 @@ Every computed version must not have a tag yet.
 8. Writes a summary with the version, the tag, the release notes and a link to the
    `Release` run.
 
-The release commit and tag are pushed by the workflow, so CI does not run on the release
-commit (pushes made with `GITHUB_TOKEN` start no workflows); the run checks formatting and
-the tests itself before pushing.
+The release commit and tag are pushed by the workflow. With `GITHUB_TOKEN` (the default) they
+start no workflows, so CI does not run on the release commit; pushed as the release GitHub
+App (see "Repository settings") the push starts the other workflows, such as CI. Either way
+the run checks formatting and the tests itself before pushing.
 
 ### Starting the Release workflow
 
@@ -130,8 +131,16 @@ changes anything, and says so.
   workflow declares `contents: write` and `actions: write` in its own `permissions`.
   "Allow GitHub Actions to create and approve pull requests" is not needed (no pull
   request is opened).
-- Branch protection or rulesets on `main` must let GitHub Actions (or the `RELEASE_TOKEN`
-  owner, when that fallback is used) push directly; the release commit is not a pull request.
+- Branch protection or rulesets on `main` must let the workflow push directly; the release
+  commit is not a pull request. `GITHUB_TOKEN` cannot be put on a ruleset's bypass list, so a
+  ruleset that requires status checks (for example `Changelog entry`, which only exists on
+  pull requests) rejects it with `GH013: Required status check … is expected`. Then use the
+  release GitHub App (the one the action release uses, below) or a `RELEASE_TOKEN`: set the
+  repository variable or secret `SERVERLESS_REGISTRY_RELEASE_APP_ID` and the secret
+  `SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY`, give the App the **Contents: Read and write**
+  permission, install it on this repository and put it on the ruleset's **Bypass list**
+  (Add bypass → Apps, **Exempt**). The checkout then uses the App's token; `RELEASE_TOKEN`,
+  when set, takes precedence (its owner must be on the bypass list instead).
 
 ### Running the script locally
 
