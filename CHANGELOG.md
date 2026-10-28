@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A credential may hold `admin` together with `read` and `publish` (registry API, `docs/api.md`
+  2.4): the client models document it, and `sreg whoami` shows the roles and the grants of a token
+  that both administers and reads or publishes. The legacy `kind` of such a credential is `admin`.
 - Documentation: `docs/spec.md` and `docs/api.md` synced with the registry (the scope of an
   existing secret can be edited with `PATCH …/secrets/<id>`).
 
