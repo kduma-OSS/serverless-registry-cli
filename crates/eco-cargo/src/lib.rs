@@ -7,6 +7,7 @@
 
 #![deny(unsafe_code)]
 
+mod archive;
 mod edit;
 mod index;
 mod metadata;
@@ -15,8 +16,8 @@ use std::path::{Path, PathBuf};
 
 use sreg_core::git::Git;
 use sreg_core::{
-    CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions, Packager, SystemRunner,
-    Workdir,
+    ArchiveOptions, CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions,
+    Packager, SystemRunner, Workdir,
 };
 
 pub use edit::set_package_version;
@@ -40,6 +41,7 @@ const RESERVED_FLAGS: [&str; 7] = [
 pub struct CargoPackager<R = SystemRunner> {
     runner: R,
     package: Option<String>,
+    source_registry_index: Option<String>,
 }
 
 impl CargoPackager<SystemRunner> {
@@ -55,12 +57,21 @@ impl<R: CommandRunner> CargoPackager<R> {
         CargoPackager {
             runner,
             package: None,
+            source_registry_index: None,
         }
     }
 
     /// Publishes the workspace member `package` (`cargo package -p <package>`).
     pub fn package_name(mut self, package: Option<String>) -> Self {
         self.package = package;
+        self
+    }
+
+    /// In archive mode: the index URL of the retired registry the archived crates were
+    /// built for. Dependencies from it are described as dependencies of the registry
+    /// being published to; the archive is not changed.
+    pub fn source_registry_index(mut self, index: Option<String>) -> Self {
+        self.source_registry_index = index;
         self
     }
 
@@ -90,6 +101,47 @@ impl<R: CommandRunner> CargoPackager<R> {
 impl<R: CommandRunner> Packager for CargoPackager<R> {
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Cargo
+    }
+
+    /// Describes a `.crate` built earlier from the `Cargo.toml` inside it.
+    ///
+    /// `--version` must agree with the crate's version. The file is uploaded unchanged
+    /// as `<name>-<version>.crate`.
+    fn package_archive(&self, opts: &ArchiveOptions) -> Result<Package, Error> {
+        if self.package.is_some() {
+            return Err(Error::InvalidInput(
+                "--package selects a crate to build and cannot be combined with --archive".into(),
+            ));
+        }
+        let archived = archive::read_crate(&opts.path, self.source_registry_index.as_deref())?;
+        if let Some(requested) = &opts.version {
+            if requested != &archived.version {
+                return Err(Error::InvalidInput(format!(
+                    "the crate contains {} {}, but --version {requested} was given",
+                    archived.name, archived.version
+                )));
+            }
+        }
+        let mut notes = Vec::new();
+        if let Some(index) = &self.source_registry_index {
+            if archived.source_registry_dependencies == 0 {
+                notes.push(format!(
+                    "no dependency of {} {} refers to the source registry index {index}",
+                    archived.name, archived.version
+                ));
+            }
+        }
+        let file_name = format!("{}-{}.crate", archived.name, archived.version);
+        let file = PackageFile::archive(&opts.path, file_name)?;
+        Ok(Package {
+            eco: Ecosystem::Cargo,
+            name: archived.name,
+            version: archived.version,
+            files: vec![file],
+            manifest: archived.index_line,
+            workdir: None,
+            notes,
+        })
     }
 
     /// Packages the crate selected in the workspace around `opts.path` into a `.crate`

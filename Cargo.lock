@@ -1694,6 +1694,7 @@ dependencies = [
  "sreg-core",
  "tar",
  "tempfile",
+ "toml",
  "toml_edit",
  "tracing",
 ]
