@@ -68,14 +68,16 @@ separately, so `%2F` inside `<name>` never splits the segment.
 
 The Worker processes an `/api/v1` request in this order and answers with the first failure:
 
-1. Version check (`X-Client-Version`, section 3) → `400 invalid_request` or
+1. Bucket check, only for the package and publish endpoints (`/api/v1/packages…`,
+   `/api/v1/publish/…`) → `503 bucket_mismatch` (6.23).
+2. Version check (`X-Client-Version`, section 3) → `400 invalid_request` or
    `426 client_too_old`.
-2. Routing → `404 not_found` for an unknown path or an unsupported method on a known path.
-3. Body parsing and size → `400 invalid_request`, `413 payload_too_large`.
-4. Authentication → `401 unauthorized`, `503 provider_unavailable`.
-5. Kind check → `403 forbidden`.
-6. Field validation → `400 invalid_request`, `413 payload_too_large`.
-7. Grant check and endpoint logic → `400 upload_incomplete`, `403 forbidden`, `404 not_found`,
+3. Routing → `404 not_found` for an unknown path or an unsupported method on a known path.
+4. Body parsing and size → `400 invalid_request`, `413 payload_too_large`.
+5. Authentication → `401 unauthorized`, `503 provider_unavailable`.
+6. Kind check → `403 forbidden`.
+7. Field validation → `400 invalid_request`, `413 payload_too_large`.
+8. Grant check and endpoint logic → `400 upload_incomplete`, `403 forbidden`, `404 not_found`,
    `409 …`.
 
 ### 1.5 Installation variables
@@ -380,6 +382,7 @@ value according to its HTTP status. A few codes add fields after these two (`amb
 | `rate_limited`         | 429    | Reserved; not emitted in `v1`. If received, wait for `Retry-After` seconds (default 10) and retry.                           |
 | `internal_error`       | 500    | Unexpected failure in the Worker.                                                                                            |
 | `provider_unavailable` | 503    | The external credential provider of the token's source did not answer. Never falls back to no auth.                          |
+| `bucket_mismatch`      | 503    | The R2 bucket is not the one this installation used before (6.23). The body also has `reason`: `empty` or `other`.           |
 
 To avoid leaking the existence of packages, a `read` credential asking for a package it has
 no grant for receives `404 not_found`, not `403`.
@@ -623,6 +626,7 @@ packages depend on, as long as they are in this registry:
 | PATCH  | `/api/v1/credentials/<project>/secrets/<hash-prefix>` | `admin`         | 6.22    |
 | DELETE | `/api/v1/credentials/<project>/secrets/<hash-prefix>` | `admin`         | 6.18    |
 | GET    | `/api/v1/github/repository?name=<owner/repo>`         | `admin`         | 6.19    |
+| POST   | `/api/v1/bucket/accept`                               | `admin`         | 6.23    |
 
 ### 6.1 Auth entry identifiers
 
@@ -1590,6 +1594,31 @@ Response `200`:
 `fullName` has GitHub's casing; `id` and `ownerId` are strings of digits. Errors:
 `400 invalid_request` (missing `name` or not `owner/repo`), `404 not_found` (the repository is
 private or does not exist), `503 provider_unavailable` (any other failure of the GitHub API, e.g. a rate limit or an outage).
+
+### 6.23 `POST /api/v1/bucket/accept`
+
+Kind `admin`. Confirms the R2 bucket the Worker is bound to as the installation's own.
+
+The installation has an id, kept in KV (`installation_id`) and in the bucket
+(`_meta/installation.json`). A new installation gets one on its first request; an installation
+from before ids adopts the bucket it finds, unless KV says it was set up before
+(`schema_version`) while the bucket never was. When KV and the bucket disagree, which happens
+when a deploy repoints the `R2_BUCKET` binding at another or a new bucket, every request to
+the native protocols and to `/api/v1/packages…` and `/api/v1/publish/…` answers
+`503 bucket_mismatch`, no migration runs and the hourly cleanup is skipped, so nothing is
+written to the wrong bucket. The panel, the credential endpoints and the login endpoints keep
+working; the panel shows a banner with a button that makes the same call.
+
+```json
+{ "error": "bucket_mismatch", "message": "The R2 bucket is not the one …", "reason": "empty" }
+```
+
+`reason` is `empty` (the bucket carries no id of this installation, or was never set up) or
+`other` (it carries another installation's id). The usual fix is to point the binding back at
+the right bucket. This endpoint is for the other case, a bucket that really is the new one: it
+stores a new id in the bucket and in KV and, when the bucket has no `_meta/packages.json`,
+builds it from the manifests (an empty bucket gets an empty list). It sends no body and
+answers `200 { "accepted": true }`. Errors: `401 unauthorized`, `403 forbidden`.
 
 ## 7. Client behaviour
 
