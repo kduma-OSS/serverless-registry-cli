@@ -10,6 +10,7 @@ mod commands;
 mod context;
 mod exit;
 mod output;
+mod prompt;
 
 use std::process::ExitCode;
 
