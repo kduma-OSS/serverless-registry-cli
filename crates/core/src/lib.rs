@@ -26,6 +26,8 @@ mod test_env;
 
 pub use client::{Client, GenericQuery};
 pub use error::{Error, Result};
-pub use packager::{Ecosystem, Package, PackageFile, PackageOptions, Packager, Workdir};
+pub use packager::{
+    ArchiveOptions, Ecosystem, Package, PackageFile, PackageOptions, Packager, Workdir,
+};
 pub use process::{CommandOutput, CommandRunner, SystemRunner};
 pub use registry_url::RegistryUrl;
