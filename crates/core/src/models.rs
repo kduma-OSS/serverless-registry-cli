@@ -73,7 +73,7 @@ impl Grant {
         let versions = parts.next().unwrap_or("*");
 
         let eco = Ecosystem::from_str(eco).map_err(|_| {
-            invalid("unknown ecosystem, expected one of composer, npm, cargo, generic")
+            invalid("unknown ecosystem, expected one of composer, npm, cargo, nuget, generic")
         })?;
         if package.is_empty() {
             return Err(invalid("empty package"));

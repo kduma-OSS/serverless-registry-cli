@@ -113,6 +113,7 @@ impl Target {
                     name: registry_name.to_owned(),
                 }
             }
+            Ecosystem::Nuget => bail!("`sreg auth nuget` is not implemented yet"),
             Ecosystem::Generic => {
                 bail!(
                     "generic packages have no package manager; pass --token to `sreg generic get`"

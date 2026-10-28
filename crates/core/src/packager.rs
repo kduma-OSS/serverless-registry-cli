@@ -20,16 +20,19 @@ pub enum Ecosystem {
     Npm,
     /// Rust crates installed with cargo.
     Cargo,
+    /// .NET packages installed with NuGet.
+    Nuget,
     /// Arbitrary files grouped into versions, downloaded through the generic feed.
     Generic,
 }
 
 impl Ecosystem {
     /// All supported ecosystems.
-    pub const ALL: [Ecosystem; 4] = [
+    pub const ALL: [Ecosystem; 5] = [
         Ecosystem::Composer,
         Ecosystem::Npm,
         Ecosystem::Cargo,
+        Ecosystem::Nuget,
         Ecosystem::Generic,
     ];
 
@@ -39,6 +42,7 @@ impl Ecosystem {
             Ecosystem::Composer => "composer",
             Ecosystem::Npm => "npm",
             Ecosystem::Cargo => "cargo",
+            Ecosystem::Nuget => "nuget",
             Ecosystem::Generic => "generic",
         }
     }
@@ -59,7 +63,7 @@ impl FromStr for Ecosystem {
             .find(|eco| eco.as_str() == s)
             .ok_or_else(|| {
                 Error::InvalidInput(format!(
-                    "unknown ecosystem `{s}`; expected one of: composer, npm, cargo, generic"
+                    "unknown ecosystem `{s}`; expected one of: composer, npm, cargo, nuget, generic"
                 ))
             })
     }
@@ -89,7 +93,8 @@ pub struct PackageFile {
     pub size: u64,
     /// Lower-case hex SHA-256 digest.
     pub sha256: String,
-    /// Role of the file, `archive` for the single archive of composer, npm and cargo.
+    /// Role of the file, `archive` for the single archive of composer, npm, cargo and
+    /// nuget.
     pub role: Option<String>,
     /// Free-form labels (generic packages).
     pub labels: BTreeMap<String, String>,
@@ -210,6 +215,10 @@ mod tests {
     #[test]
     fn ecosystem_serializes_lowercase() {
         assert_eq!(serde_json::to_string(&Ecosystem::Npm).unwrap(), "\"npm\"");
+        assert_eq!(
+            serde_json::to_string(&Ecosystem::Nuget).unwrap(),
+            "\"nuget\""
+        );
         assert_eq!(
             serde_json::from_str::<Ecosystem>("\"cargo\"").unwrap(),
             Ecosystem::Cargo
