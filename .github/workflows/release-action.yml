@@ -3,8 +3,9 @@
 # starts the Release workflow of kduma-OSS/serverless-registry-publish-action with the new
 # release as the action's default `sreg-version` (a patch release of the action).
 #
-# It authenticates as a GitHub App (repository variable RELEASE_APP_ID, secret
-# RELEASE_APP_PRIVATE_KEY) that may only start workflows in the action repository. Without
+# It authenticates as a GitHub App (repository secrets SERVERLESS_REGISTRY_RELEASE_APP_ID and
+# SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY) that may only start workflows in the action
+# repository. Without
 # them, or when the dispatch fails, it only prints a notice: the action repository checks
 # for new sreg releases every hour and releases itself. See docs/releasing.md.
 name: Release the action
@@ -51,14 +52,15 @@ jobs:
       - name: Check the GitHub App
         id: app
         if: steps.release.outputs.stable == 'true'
+        # Secrets cannot be tested in `if:`; test them here.
         env:
-          APP_ID: ${{ vars.RELEASE_APP_ID }}
-          HAS_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+          APP_ID: ${{ secrets.SERVERLESS_REGISTRY_RELEASE_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY }}
         run: |
-          if [ -n "$APP_ID" ] && [ "$HAS_KEY" = true ]; then
+          if [ -n "$APP_ID" ] && [ -n "$APP_PRIVATE_KEY" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY is not set, so the action release is not started from here; the action repository syncs itself within an hour."
+            echo "::notice::The secret SERVERLESS_REGISTRY_RELEASE_APP_ID or SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY is not set, so the action release is not started from here; the action repository syncs itself within an hour."
             echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -68,8 +70,8 @@ jobs:
         continue-on-error: true
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.SERVERLESS_REGISTRY_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY }}
           owner: kduma-OSS
           repositories: serverless-registry-publish-action
 
