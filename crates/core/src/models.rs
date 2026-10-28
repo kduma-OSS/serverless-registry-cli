@@ -53,31 +53,48 @@ pub struct Grant {
     pub package: String,
     /// Version constraint in the ecosystem's syntax; `*` means all versions.
     pub versions: String,
+    /// Whether a `read` grant also opens the packages its versions depend on. The registry
+    /// always returns it; `None` omits it from a request, which the registry stores as
+    /// `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transitive: Option<bool>,
 }
 
 impl Grant {
-    /// Parses the CLI shorthand `eco:package[:versions]`.
+    /// Parses the CLI shorthand `eco:package[:versions[:transitive]]`.
     ///
-    /// The value is split at the first two `:`, so the version constraint may itself
-    /// contain colons or commas (`cargo:acme-core:>=1.4, <2`). `versions` defaults to `*`.
+    /// The value is split at the first two `:` (for maven, whose package names contain one
+    /// `:`, at the first three), so the version constraint may itself contain colons or
+    /// commas (`cargo:acme-core:>=1.4, <2`). `versions` defaults to `*`. A rest ending in
+    /// `:true` or `:false` sets `transitive`, which is otherwise left to the registry's
+    /// default (`true`).
     pub fn parse_shorthand(value: &str) -> Result<Self> {
         let invalid = |reason: &str| {
             Error::InvalidInput(format!(
-                "invalid grant `{value}`: {reason}; expected <eco>:<package>[:<versions>]"
+                "invalid grant `{value}`: {reason}; expected \
+                 <eco>:<package>[:<versions>[:<transitive>]]"
             ))
         };
 
-        let mut parts = value.splitn(3, ':');
-        let eco = parts.next().unwrap_or_default();
-        let package = parts.next().ok_or_else(|| invalid("missing package"))?;
-        let versions = parts.next().unwrap_or("*");
-
+        let (eco, rest) = value.split_once(':').unwrap_or((value, ""));
         let eco = Ecosystem::from_str(eco).map_err(|_| {
             invalid("unknown ecosystem, expected one of composer, npm, cargo, nuget, generic, swift, maven")
         })?;
-        if package.is_empty() {
-            return Err(invalid("empty package"));
+        // A maven package is `groupId:artifactId`: its own `:` is not a separator.
+        let separators = if eco == Ecosystem::Maven { 2 } else { 1 };
+        let mut parts = rest.splitn(separators + 1, ':');
+        let package_parts: Vec<&str> = parts.by_ref().take(separators).collect();
+        if package_parts.len() < separators || package_parts.iter().any(|part| part.is_empty()) {
+            return Err(invalid("missing package"));
         }
+        let package = package_parts.join(":");
+        let rest = parts.next().unwrap_or("*");
+        let (versions, transitive) = match rest.rsplit_once(':') {
+            Some((versions, "true")) => (versions, Some(true)),
+            Some((versions, "false")) => (versions, Some(false)),
+            _ => (rest, None),
+        };
+
         if package.chars().any(char::is_whitespace) {
             return Err(invalid("the package must not contain whitespace"));
         }
@@ -93,15 +110,20 @@ impl Grant {
 
         Ok(Grant {
             eco,
-            package: package.to_owned(),
+            package,
             versions: versions.to_owned(),
+            transitive,
         })
     }
 }
 
 impl fmt::Display for Grant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}:{}", self.eco, self.package, self.versions)
+        write!(f, "{}:{}:{}", self.eco, self.package, self.versions)?;
+        match self.transitive {
+            Some(transitive) => write!(f, ":{transitive}"),
+            None => Ok(()),
+        }
     }
 }
 
@@ -644,8 +666,54 @@ mod tests {
 
     #[test]
     fn grant_shorthand_round_trips_through_display() {
-        let grant = Grant::parse_shorthand("composer:acme/*:*").unwrap();
-        assert_eq!(grant.to_string(), "composer:acme/*:*");
+        for value in [
+            "composer:acme/*:*",
+            "npm:@acme/sdk:^2.0:false",
+            "maven:com.acme:sdk:[1.0,2.0):true",
+        ] {
+            assert_eq!(Grant::parse_shorthand(value).unwrap().to_string(), value);
+        }
+    }
+
+    #[test]
+    fn grant_shorthand_reads_the_transitive_suffix() {
+        let grant = Grant::parse_shorthand("npm:@acme/sdk:^2.0:false").unwrap();
+        assert_eq!(grant.versions, "^2.0");
+        assert_eq!(grant.transitive, Some(false));
+        let grant = Grant::parse_shorthand("cargo:acme-core:>=1.4, <2:true").unwrap();
+        assert_eq!(grant.versions, ">=1.4, <2");
+        assert_eq!(grant.transitive, Some(true));
+        assert_eq!(
+            Grant::parse_shorthand("npm:@acme/sdk").unwrap().transitive,
+            None
+        );
+    }
+
+    #[test]
+    fn grant_shorthand_keeps_the_colon_of_maven_packages() {
+        let grant = Grant::parse_shorthand("maven:com.acme:sdk:[1.0,2.0)").unwrap();
+        assert_eq!(grant.eco, Ecosystem::Maven);
+        assert_eq!(grant.package, "com.acme:sdk");
+        assert_eq!(grant.versions, "[1.0,2.0)");
+        let grant = Grant::parse_shorthand("maven:com.acme:*").unwrap();
+        assert_eq!(grant.package, "com.acme:*");
+        assert_eq!(grant.versions, "*");
+        assert!(Grant::parse_shorthand("maven:com.acme").is_err());
+    }
+
+    #[test]
+    fn grant_transitive_is_omitted_from_requests_unless_set() {
+        let grant = Grant::parse_shorthand("composer:acme/*").unwrap();
+        let value = serde_json::to_value(&grant).unwrap();
+        assert_eq!(
+            value,
+            json!({ "eco": "composer", "package": "acme/*", "versions": "*" })
+        );
+        let read: Grant = serde_json::from_value(json!({
+            "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": false
+        }))
+        .unwrap();
+        assert_eq!(read.transitive, Some(false));
     }
 
     #[test]

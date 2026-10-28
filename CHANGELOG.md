@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trait and SHA-256 file digest helper.
 - Copies of the specification (`docs/spec.md`) and the API contract (`docs/api.md`).
 - API models for every `/api/v1` request and response, and the grant shorthand parser
-  `eco:package[:versions]`.
+  `eco:package[:versions[:transitive]]` (maven packages keep their `groupId:artifactId`).
+  `sreg whoami` shows whether each grant of a `read` credential is transitive.
 - HTTP client (reqwest with rustls) sending `User-Agent`, `X-Client-Version` and the
   bearer token, reading `X-Min-Client-Version`, mapping `426`, `409 version_exists`,
   `409 file_exists` and the error envelope to typed errors, and retrying `GET` requests

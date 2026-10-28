@@ -20,8 +20,8 @@ async fn whoami_server() -> MockServer {
                 "project": "shop-frontend",
                 "kind": "read",
                 "grants": [
-                    { "eco": "npm", "package": "@acme/sdk", "versions": "^2.0" },
-                    { "eco": "composer", "package": "acme/*", "versions": "*" }
+                    { "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": true },
+                    { "eco": "composer", "package": "acme/*", "versions": "*", "transitive": false }
                 ]
             }),
         ))
@@ -39,7 +39,12 @@ async fn whoami_prints_project_kind_and_grants() {
         .success()
         .stdout(predicate::str::contains("Project: shop-frontend"))
         .stdout(predicate::str::contains("Kind:    read"))
-        .stdout(predicate::str::contains("npm       @acme/sdk  ^2.0"))
+        .stdout(predicate::str::contains(
+            "npm       @acme/sdk  ^2.0      yes",
+        ))
+        .stdout(predicate::str::contains(
+            "composer  acme/*     *         no",
+        ))
         .stdout(predicate::str::contains("k7Qx2mN9").not());
 }
 
@@ -52,6 +57,7 @@ async fn whoami_json_is_the_only_stdout() {
     let body = stdout_json(&assert);
     assert_eq!(body["project"], "shop-frontend");
     assert_eq!(body["grants"][1]["package"], "acme/*");
+    assert_eq!(body["grants"][1]["transitive"], false);
 }
 
 #[tokio::test(flavor = "multi_thread")]

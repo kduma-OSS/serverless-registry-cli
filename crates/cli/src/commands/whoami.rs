@@ -22,22 +22,34 @@ pub async fn run(global: &GlobalArgs, out: &Output) -> anyhow::Result<()> {
             println!("Grants:  {note}");
         } else {
             println!("Grants:");
-            println!("{}", indent(&grants_table(&whoami.grants), 2));
+            // `transitive` only matters for read credentials (docs/api.md 5.1).
+            let transitive = whoami.kind == Kind::Read;
+            println!("{}", indent(&grants_table(&whoami.grants, transitive), 2));
         }
     })
 }
 
-/// Formats grants as a table.
-pub fn grants_table(grants: &[Grant]) -> String {
+/// Formats grants as a table; with `transitive`, a column tells whether each grant also
+/// opens the dependencies of its packages (the registry's default when it sent nothing).
+pub fn grants_table(grants: &[Grant], transitive: bool) -> String {
     let rows: Vec<Vec<String>> = grants
         .iter()
         .map(|grant| {
-            vec![
+            let mut row = vec![
                 grant.eco.to_string(),
                 grant.package.clone(),
                 grant.versions.clone(),
-            ]
+            ];
+            if transitive {
+                let opens = grant.transitive.unwrap_or(true);
+                row.push(if opens { "yes" } else { "no" }.to_owned());
+            }
+            row
         })
         .collect();
-    table(&["ECO", "PACKAGE", "VERSIONS"], &rows)
+    if transitive {
+        table(&["ECO", "PACKAGE", "VERSIONS", "TRANSITIVE"], &rows)
+    } else {
+        table(&["ECO", "PACKAGE", "VERSIONS"], &rows)
+    }
 }
