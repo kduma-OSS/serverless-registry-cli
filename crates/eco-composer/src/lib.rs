@@ -1,9 +1,9 @@
 //! Composer packaging for `sreg`.
 //!
 //! [`ComposerPackager`] reads `composer.json`, picks the version (from `--version` or
-//! the git tag of `HEAD`) and archives the project as a zip: with `git archive HEAD`,
-//! which honours `export-ignore` in `.gitattributes`, or, outside a git repository, by
-//! zipping the directory without `vendor/` and `.git/`.
+//! the release tag on `HEAD`) and archives the package directory as a zip: with
+//! `git archive HEAD:<path>`, which honours `export-ignore` in `.gitattributes`, or,
+//! outside a git repository, by zipping the directory without `vendor/` and `.git/`.
 
 #![deny(unsafe_code)]
 
@@ -13,12 +13,13 @@ mod validate;
 use std::path::Path;
 
 use serde_json::Value;
+use sreg_core::git::Git;
 use sreg_core::{
     CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions, Packager, SystemRunner,
     Workdir,
 };
 
-pub use validate::{validate_name, validate_version, version_from_tag};
+pub use validate::{validate_name, validate_version};
 
 /// Packages Composer libraries for publication.
 #[derive(Debug, Clone, Default)]
@@ -47,21 +48,36 @@ impl<R: CommandRunner> Packager for ComposerPackager<R> {
         Ecosystem::Composer
     }
 
-    /// Reads and validates `composer.json`, determines the version and builds the zip
-    /// archive `<package>-<version>.zip` in a temporary directory owned by the package.
+    /// Reads and validates `composer.json` in `opts.path`, determines the version and
+    /// builds the zip archive `<package>-<version>.zip` in a temporary directory owned
+    /// by the package.
+    ///
+    /// Inside a git work tree the archive is `git archive HEAD:<path>`, where `<path>`
+    /// is the package directory relative to the top level, so the package directory is
+    /// the root of the archive wherever it lives in the repository.
     fn package(&self, opts: &PackageOptions) -> Result<Package, Error> {
+        if !opts.extra_args.is_empty() {
+            return Err(Error::InvalidInput(
+                "composer packaging runs no external tool; remove the arguments after `--`".into(),
+            ));
+        }
+        if opts.version.is_some() && opts.tag_prefix.is_some() {
+            return Err(Error::InvalidInput(
+                "--version and --tag-prefix cannot be combined".into(),
+            ));
+        }
         let dir = opts.path.as_path();
         let manifest = read_manifest(dir)?;
         let name = manifest_name(&manifest)?;
 
-        let git = archive::Git::new(&self.runner, dir);
-        let in_repository = git.is_repository()?;
-        let version = match &opts.version {
-            Some(version) => version.clone(),
-            None if in_repository => git.head_tag()?,
-            None => {
+        let git = Git::new(&self.runner, dir);
+        let toplevel = git.toplevel()?;
+        let version = match (&opts.version, &toplevel) {
+            (Some(version), _) => version.clone(),
+            (None, Some(_)) => git.release_version(opts.tag_prefix.as_deref())?,
+            (None, None) => {
                 return Err(Error::InvalidInput(format!(
-                    "no version given and `{}` is not a git repository; pass --version",
+                    "no version given and `{}` is not inside a git repository; pass --version",
                     dir.display()
                 )))
             }
@@ -72,11 +88,12 @@ impl<R: CommandRunner> Packager for ComposerPackager<R> {
         let workdir = Workdir::new()?;
         let file_name = format!("{}-{version}.zip", short_name(&name));
         let archive_path = workdir.path().join(&file_name);
-        if in_repository {
-            git.archive(&archive_path)?;
+        if let Some(toplevel) = toplevel {
+            let prefix = archive::relative_prefix(&toplevel, dir)?;
+            archive::git_archive(&self.runner, &toplevel, &prefix, &archive_path)?;
             let archived = archive::read_composer_json(&archive_path)?.ok_or_else(|| {
                 Error::InvalidInput(
-                    "`git archive HEAD` produced no composer.json at the root; commit \
+                    "the archive of HEAD has no composer.json at its root; commit \
                      composer.json and make sure it is not marked export-ignore"
                         .into(),
                 )

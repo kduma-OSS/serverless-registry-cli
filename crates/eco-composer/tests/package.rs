@@ -157,16 +157,60 @@ fn version_flag_overrides_the_tag() {
 }
 
 #[test]
-fn tags_without_a_v_prefix_are_accepted() {
+fn bare_semver_tags_need_an_empty_tag_prefix() {
     let dir = library();
     commit_all(dir.path());
     git(dir.path(), &["tag", "-a", "1.4.0-beta.2", "-m", "beta"]);
+    let packager = ComposerPackager::new();
 
-    let package = ComposerPackager::new()
-        .package(&opts(dir.path(), None))
+    let err = packager.package(&opts(dir.path(), None)).unwrap_err();
+    assert!(invalid_input(&err, "--tag-prefix"), "{err}");
+
+    let package = packager
+        .package(&PackageOptions {
+            tag_prefix: Some(String::new()),
+            ..opts(dir.path(), None)
+        })
         .unwrap();
-
     assert_eq!(package.version, "1.4.0-beta.2");
+}
+
+#[test]
+fn several_release_tags_on_head_are_ambiguous() {
+    let dir = library();
+    commit_all(dir.path());
+    git(dir.path(), &["tag", "v1.2.3"]);
+    git(dir.path(), &["tag", "v1.3.0"]);
+
+    let err = ComposerPackager::new()
+        .package(&opts(dir.path(), None))
+        .unwrap_err();
+
+    assert!(invalid_input(&err, "more than one release tag"), "{err}");
+}
+
+#[test]
+fn version_and_tag_prefix_cannot_be_combined() {
+    let dir = library();
+    let err = ComposerPackager::with_runner(NoGit)
+        .package(&PackageOptions {
+            tag_prefix: Some("sdk/v".into()),
+            ..opts(dir.path(), Some("1.0.0"))
+        })
+        .unwrap_err();
+    assert!(invalid_input(&err, "cannot be combined"), "{err}");
+}
+
+#[test]
+fn passthrough_arguments_are_rejected() {
+    let dir = library();
+    let err = ComposerPackager::with_runner(NoGit)
+        .package(&PackageOptions {
+            extra_args: vec!["--foo".into()],
+            ..opts(dir.path(), Some("1.0.0"))
+        })
+        .unwrap_err();
+    assert!(invalid_input(&err, "arguments after `--`"), "{err}");
 }
 
 #[test]
@@ -212,17 +256,26 @@ fn uncommitted_composer_json_changes_are_rejected() {
 }
 
 #[test]
-fn a_package_in_a_subdirectory_is_archived_from_there() {
+fn a_package_in_a_subdirectory_becomes_the_archive_root() {
     let repo = tempfile::tempdir().unwrap();
-    std::fs::write(repo.path().join("README.md"), "monorepo\n").unwrap();
+    std::fs::write(repo.path().join("MONOREPO.md"), "monorepo\n").unwrap();
     let package_dir = repo.path().join("packages/sdk");
     copy_dir(&fixture(), &package_dir);
+    copy_dir(&fixture(), &repo.path().join("packages/other"));
     commit_all(repo.path());
+    git(repo.path(), &["tag", "v9.0.0"]);
+    git(repo.path(), &["tag", "sdk/v1.1.0"]);
+    git(repo.path(), &["tag", "other/v2.0.0"]);
 
     let package = ComposerPackager::new()
-        .package(&opts(&package_dir, Some("1.0.0")))
+        .package(&PackageOptions {
+            tag_prefix: Some("sdk/v".into()),
+            ..opts(&package_dir, None)
+        })
         .unwrap();
 
+    assert_eq!(package.version, "1.1.0");
+    assert_eq!(package.files[0].name, "sdk-1.1.0.zip");
     let names = zip_names(&package.files[0].path);
     assert!(
         names.iter().any(|name| name == "composer.json"),
@@ -233,7 +286,32 @@ fn a_package_in_a_subdirectory_is_archived_from_there() {
         "{names:?}"
     );
     assert!(!names.iter().any(|name| name.starts_with("packages/")));
-    assert!(!names.iter().any(|name| name.starts_with("tests")));
+    assert!(!names
+        .iter()
+        .any(|name| name == "MONOREPO.md" || name.starts_with("other")));
+    // The package's own .gitattributes applies.
+    assert!(
+        !names.iter().any(|name| name.starts_with("tests")),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn an_untracked_package_directory_is_an_error() {
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::write(repo.path().join("README.md"), "monorepo\n").unwrap();
+    commit_all(repo.path());
+    let package_dir = repo.path().join("packages/new");
+    copy_dir(&fixture(), &package_dir);
+
+    let err = ComposerPackager::new()
+        .package(&opts(&package_dir, Some("1.0.0")))
+        .unwrap_err();
+
+    assert!(
+        matches!(err, Error::Command { ref command, .. } if command.contains("HEAD:packages/new")),
+        "{err}"
+    );
 }
 
 #[test]
@@ -319,7 +397,7 @@ fn without_git_a_version_is_required() {
         .package(&opts(dir.path(), None))
         .unwrap_err();
 
-    assert!(invalid_input(&err, "not a git repository"), "{err}");
+    assert!(invalid_input(&err, "not inside a git repository"), "{err}");
 }
 
 #[test]

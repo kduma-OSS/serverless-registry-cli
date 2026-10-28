@@ -78,11 +78,6 @@ fn prerelease_valid(pre: &str) -> bool {
     })
 }
 
-/// The version named by a git tag: `v1.2.3` → `1.2.3`, `1.2.3` → `1.2.3`.
-pub fn version_from_tag(tag: &str) -> &str {
-    tag.strip_prefix('v').unwrap_or(tag)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,12 +168,5 @@ mod tests {
     fn dev_versions_get_their_own_message() {
         let err = validate_version("dev-main").unwrap_err();
         assert!(err.to_string().contains("development version"), "{err}");
-    }
-
-    #[test]
-    fn tags_lose_their_v_prefix() {
-        assert_eq!(version_from_tag("v1.2.3"), "1.2.3");
-        assert_eq!(version_from_tag("1.2.3"), "1.2.3");
-        assert_eq!(version_from_tag("v1.0.0-rc1"), "1.0.0-rc1");
     }
 }

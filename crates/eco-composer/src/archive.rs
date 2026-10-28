@@ -1,7 +1,7 @@
 //! Building the zip archive of a Composer package.
 
 use std::fs::File;
-use std::io::{BufWriter, ErrorKind, Read};
+use std::io::{BufWriter, Read};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -9,80 +9,64 @@ use sreg_core::{CommandRunner, Error};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
-use crate::validate::version_from_tag;
-
 /// Archives larger than this need ZIP64 entries.
 const ZIP64_THRESHOLD: u64 = u32::MAX as u64;
 
-/// `git` run in the package directory.
-pub(crate) struct Git<'a, R> {
-    runner: &'a R,
-    dir: &'a Path,
+/// The path of `dir` relative to the work tree's `toplevel`, `/`-separated; empty for
+/// the top level itself.
+pub(crate) fn relative_prefix(toplevel: &Path, dir: &Path) -> Result<String, Error> {
+    let toplevel = std::fs::canonicalize(toplevel)?;
+    let dir = std::fs::canonicalize(dir)?;
+    let relative = dir.strip_prefix(&toplevel).map_err(|_| {
+        Error::InvalidInput(format!(
+            "`{}` is not inside the git work tree `{}`",
+            dir.display(),
+            toplevel.display()
+        ))
+    })?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        parts.push(
+            component
+                .as_os_str()
+                .to_str()
+                .ok_or_else(|| non_utf8(&dir))?,
+        );
+    }
+    Ok(parts.join("/"))
 }
 
-impl<'a, R: CommandRunner> Git<'a, R> {
-    pub(crate) fn new(runner: &'a R, dir: &'a Path) -> Self {
-        Git { runner, dir }
-    }
-
-    /// Whether the directory is inside a git work tree. A missing `git` counts as "no".
-    pub(crate) fn is_repository(&self) -> Result<bool, Error> {
-        match self
-            .runner
-            .run("git", &["rev-parse", "--is-inside-work-tree"], self.dir)
-        {
-            Ok(output) => Ok(output.is_success() && output.stdout_text() == "true"),
-            Err(Error::Io(err)) if err.kind() == ErrorKind::NotFound => {
-                tracing::debug!("git is not installed");
-                Ok(false)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    /// The version named by the tag pointing at `HEAD` (`v1.2.3` → `1.2.3`).
-    pub(crate) fn head_tag(&self) -> Result<String, Error> {
-        let output = self.runner.run(
+/// Writes `git archive HEAD:<prefix>` (or `HEAD` for an empty prefix) as a zip to
+/// `destination`: the package directory becomes the root of the archive and paths
+/// marked `export-ignore` are left out.
+pub(crate) fn git_archive<R: CommandRunner + ?Sized>(
+    runner: &R,
+    toplevel: &Path,
+    prefix: &str,
+    destination: &Path,
+) -> Result<(), Error> {
+    let destination_str = destination.to_str().ok_or_else(|| non_utf8(destination))?;
+    let tree = if prefix.is_empty() {
+        "HEAD".to_owned()
+    } else {
+        format!("HEAD:{prefix}")
+    };
+    let output = format!("--output={destination_str}");
+    let command = format!("git archive --format=zip {tree}");
+    runner
+        .run(
             "git",
-            &["describe", "--exact-match", "--tags", "HEAD"],
-            self.dir,
-        )?;
-        if !output.is_success() {
-            tracing::debug!(stderr = %output.stderr_text(), "git describe failed");
-            return Err(Error::InvalidInput(
-                "no version given and HEAD has no tag; tag the release (`git tag v1.2.3`) or \
-                 pass --version"
-                    .into(),
-            ));
-        }
-        let tag = output.stdout_text();
-        Ok(version_from_tag(tag.trim()).to_owned())
+            &["archive", "--format=zip", "--prefix=", &output, &tree],
+            toplevel,
+        )?
+        .into_success(&command)?;
+    if !destination.is_file() {
+        return Err(Error::Command {
+            command,
+            message: "no archive was written".into(),
+        });
     }
-
-    /// Writes `git archive HEAD` as a zip to `destination`; honours `export-ignore`.
-    pub(crate) fn archive(&self, destination: &Path) -> Result<(), Error> {
-        let destination = destination.to_str().ok_or_else(|| {
-            Error::InvalidInput(format!(
-                "the temporary path `{}` is not valid UTF-8",
-                destination.display()
-            ))
-        })?;
-        let output = format!("--output={destination}");
-        self.runner
-            .run(
-                "git",
-                &["archive", "--format=zip", "--prefix=", &output, "HEAD"],
-                self.dir,
-            )?
-            .into_success("git archive --format=zip HEAD")?;
-        if !Path::new(destination).is_file() {
-            return Err(Error::Command {
-                command: "git archive --format=zip HEAD".into(),
-                message: "no archive was written".into(),
-            });
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Parses `composer.json` at the root of the zip at `path`, if there is one.
@@ -235,102 +219,78 @@ mod tests {
 
     /// Answers every command with the same output and records the arguments.
     struct Fake {
-        output: Result<CommandOutput, ErrorKind>,
-        calls: RefCell<Vec<Vec<String>>>,
-    }
-
-    impl Fake {
-        fn new(output: Result<CommandOutput, ErrorKind>) -> Self {
-            Fake {
-                output,
-                calls: RefCell::new(Vec::new()),
-            }
-        }
+        output: CommandOutput,
+        calls: RefCell<Vec<(Vec<String>, PathBuf)>>,
     }
 
     impl CommandRunner for Fake {
-        fn run(&self, program: &str, args: &[&str], _cwd: &Path) -> Result<CommandOutput, Error> {
+        fn run(&self, program: &str, args: &[&str], cwd: &Path) -> Result<CommandOutput, Error> {
             let mut call = vec![program.to_owned()];
             call.extend(args.iter().map(|arg| (*arg).to_owned()));
-            self.calls.borrow_mut().push(call);
-            self.output
-                .clone()
-                .map_err(|kind| Error::Io(std::io::Error::from(kind)))
+            self.calls.borrow_mut().push((call, cwd.to_path_buf()));
+            Ok(self.output.clone())
         }
     }
 
     #[test]
-    fn missing_git_means_no_repository() {
-        let fake = Fake::new(Err(ErrorKind::NotFound));
-        assert!(!Git::new(&fake, Path::new(".")).is_repository().unwrap());
+    fn prefix_is_the_path_below_the_top_level() {
+        let top = tempfile::tempdir().unwrap();
+        let sub = top.path().join("packages/sdk");
+        std::fs::create_dir_all(&sub).unwrap();
 
-        let fake = Fake::new(Err(ErrorKind::PermissionDenied));
-        assert!(Git::new(&fake, Path::new(".")).is_repository().is_err());
+        assert_eq!(relative_prefix(top.path(), &sub).unwrap(), "packages/sdk");
+        assert_eq!(relative_prefix(top.path(), top.path()).unwrap(), "");
+        assert_eq!(
+            relative_prefix(top.path(), &sub.join("..")).unwrap(),
+            "packages"
+        );
+        let elsewhere = tempfile::tempdir().unwrap();
+        assert!(relative_prefix(top.path(), elsewhere.path()).is_err());
     }
 
     #[test]
-    fn repository_detection_reads_rev_parse() {
-        let fake = Fake::new(Ok(CommandOutput::success("true\n")));
-        assert!(Git::new(&fake, Path::new(".")).is_repository().unwrap());
-        assert_eq!(
-            fake.calls.borrow()[0],
-            ["git", "rev-parse", "--is-inside-work-tree"]
-        );
+    fn archives_the_subtree_from_the_top_level() {
+        let fake = Fake {
+            output: CommandOutput::success(""),
+            calls: RefCell::new(Vec::new()),
+        };
+        // The fake writes nothing, so the missing archive is reported.
+        let err = git_archive(
+            &fake,
+            Path::new("/work/repo"),
+            "packages/sdk",
+            Path::new("/tmp/sdk-1.0.0.zip"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Command { .. }), "{err}");
 
-        let fake = Fake::new(Ok(CommandOutput::failure(
-            128,
-            "fatal: not a git repository",
-        )));
-        assert!(!Git::new(&fake, Path::new(".")).is_repository().unwrap());
-    }
-
-    #[test]
-    fn head_tag_strips_the_v_prefix() {
-        let fake = Fake::new(Ok(CommandOutput::success("v2.0.0-rc1\n")));
+        let calls = fake.calls.borrow();
+        let (args, cwd) = &calls[0];
         assert_eq!(
-            Git::new(&fake, Path::new(".")).head_tag().unwrap(),
-            "2.0.0-rc1"
-        );
-        assert_eq!(
-            fake.calls.borrow()[0],
-            ["git", "describe", "--exact-match", "--tags", "HEAD"]
-        );
-    }
-
-    #[test]
-    fn untagged_head_is_a_clear_error() {
-        let fake = Fake::new(Ok(CommandOutput::failure(
-            128,
-            "fatal: no tag exactly matches",
-        )));
-        let err = Git::new(&fake, Path::new(".")).head_tag().unwrap_err();
-        assert!(err.to_string().contains("--version"), "{err}");
-        assert!(err.to_string().contains("git tag v1.2.3"), "{err}");
-    }
-
-    #[test]
-    fn failed_archive_reports_git_stderr() {
-        let fake = Fake::new(Ok(CommandOutput::failure(
-            128,
-            "fatal: not a valid object name: 'HEAD'",
-        )));
-        let err = Git::new(&fake, Path::new("."))
-            .archive(Path::new("/tmp/x.zip"))
-            .unwrap_err();
-        assert!(
-            matches!(err, Error::Command { ref message, .. } if message.contains("HEAD")),
-            "{err}"
-        );
-        assert_eq!(
-            fake.calls.borrow()[0],
-            [
+            args,
+            &[
                 "git",
                 "archive",
                 "--format=zip",
                 "--prefix=",
-                "--output=/tmp/x.zip",
-                "HEAD"
+                "--output=/tmp/sdk-1.0.0.zip",
+                "HEAD:packages/sdk"
             ]
         );
+        assert_eq!(cwd, Path::new("/work/repo"));
+    }
+
+    #[test]
+    fn the_top_level_is_archived_as_head() {
+        let fake = Fake {
+            output: CommandOutput::failure(128, "fatal: not a valid object name: 'HEAD'"),
+            calls: RefCell::new(Vec::new()),
+        };
+        let err = git_archive(&fake, Path::new("/r"), "", Path::new("/tmp/x.zip")).unwrap_err();
+        assert!(
+            matches!(err, Error::Command { ref message, .. } if message.contains("HEAD")),
+            "{err}"
+        );
+        assert_eq!(fake.calls.borrow()[0].0.last().unwrap(), "HEAD");
     }
 }
