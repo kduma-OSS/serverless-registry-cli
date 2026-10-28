@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SREG_NO_BROWSER`) prints the page instead of opening it. Needs a registry with login
   secrets (`docs/api.md` 2.6, 6.20, 6.21).
 - A `401` now suggests signing in again with `sreg login`.
+- The credential models know the `login` secret type and the new `description`, `totp`,
+  `password` and `replaces` fields, the one-time `login` reveal of a created secret, and
+  `Client::describe_secret` (`PATCH …/secrets/<id>`).
 
 ## [0.1.2] - 2026-10-28
 

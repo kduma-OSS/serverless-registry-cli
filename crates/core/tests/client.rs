@@ -349,6 +349,18 @@ async fn credential_endpoints_use_documented_paths_and_bodies() {
         .expect(1)
         .mount(&server)
         .await;
+    Mock::given(method("PATCH"))
+        .and(path(
+            "/api/v1/credentials/shop-frontend/secrets/3f9a1c0b7d2e",
+        ))
+        .and(body_json(json!({ "description": "CI of the shop" })))
+        .respond_with(ok(json!({
+            "secret": { "id": "3f9a1c0b7d2e", "type": "key", "created": "2026-10-28T09:00:00Z",
+                        "expires": null, "description": "CI of the shop" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
     Mock::given(method("DELETE"))
         .and(path(
             "/api/v1/credentials/shop-frontend/secrets/3f9a1c0b7d2e",
@@ -384,6 +396,18 @@ async fn credential_endpoints_use_documented_paths_and_bodies() {
         .await
         .unwrap();
     assert!(added.token.is_some());
+    let described = client
+        .describe_secret(
+            "shop-frontend",
+            "3f9a1c0b7d2e",
+            Some("CI of the shop".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        described.secret.description.as_deref(),
+        Some("CI of the shop")
+    );
     let expired = client
         .expire_secret(
             "shop-frontend",
