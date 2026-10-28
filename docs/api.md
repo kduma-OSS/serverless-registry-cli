@@ -91,6 +91,7 @@ the contract allows:
 | `ECOSYSTEMS`          | `composer,npm,cargo,generic,nuget,swift,maven` (all) | enabled ecosystems; a disabled one is treated as unknown: `<eco>` paths answer `404 not_found`, `eco` in `init` is `400 invalid_request`, listings omit it and every path of its read protocol (e.g. `/generic/…`, `/nuget/…`, `/swift/…`, `/maven/…`) answers `404 not_found` |
 | `MAX_UPLOAD_BYTES`    | `536870912` (512 MiB)                                | largest `size` of each file in `init`                                                                                                                                                                                                                                          |
 | `APPEND_WINDOW_HOURS` | `24`                                                 | how long after `published` files may still be appended to a version (6.4.1)                                                                                                                                                                                                    |
+| `MAX_PUBLISH_SCOPES`  | `20`                                                 | most `scopes` a publish login (2.6, 6.20) can name; 1 to 100, anything else means the default                                                                                                                                                                                  |
 | `TOKEN_PREFIX`        | empty                                                | optional token prefix (2.1)                                                                                                                                                                                                                                                    |
 | `SESSION_SECRET`      | none (a secret)                                      | HMAC key of the panel session cookie (2.3); while it is unset, a panel login answers `500 internal_error` naming the setting; rotating it invalidates every session                                                                                                            |
 
@@ -313,7 +314,7 @@ exp }`, valid 5 minutes, `HttpOnly; Secure; SameSite=Lax`, limited to the path o
 
 A pull token lasts 1 hour, or `LOGIN_TOKEN_EXTENDED_TTL_HOURS` (default 24) when extended
 validity was ticked; a publish token lasts 15 minutes. A publish token carries `scopes`, the
-approved `{ eco, package, version }` list (at most 20): `publish/init` and `publish/commit`
+approved `{ eco, package, version }` list (at most `MAX_PUBLISH_SCOPES`, default 20): `publish/init` and `publish/commit`
 answer `403 forbidden` for anything else, and `whoami` (6.3) returns the scopes.
 
 The token is `<project>:st.<payload>.<signature>`; the payload is base64url JSON
@@ -1524,7 +1525,7 @@ publish names every version to approve:
 }
 ```
 
-`scopes` has 1 to 20 entries; `eco` must be enabled, `version` valid for it, and `package` and
+`scopes` has 1 to `MAX_PUBLISH_SCOPES` entries (default 20, at most 100); `eco` must be enabled, `version` valid for it, and `package` and
 `version` are returned in their stored form (NuGet and Swift names lower-cased, NuGet versions
 normalised); duplicates are dropped. Response `201`:
 
