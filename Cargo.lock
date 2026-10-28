@@ -1724,7 +1724,10 @@ dependencies = [
 name = "sreg-eco-maven"
 version = "0.1.0"
 dependencies = [
+ "quick-xml",
+ "serde_json",
  "sreg-core",
+ "tempfile",
 ]
 
 [[package]]

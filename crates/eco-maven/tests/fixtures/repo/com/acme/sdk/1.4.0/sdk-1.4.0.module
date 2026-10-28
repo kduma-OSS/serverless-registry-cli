@@ -1,0 +1,17 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.acme",
+    "module": "sdk",
+    "version": "1.4.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10"
+    }
+  },
+  "variants": []
+}

@@ -111,8 +111,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Maven {
             command: MavenCommand::Publish(args),
         } => {
-            // The coordinates (`args.coords`) reach the packager once it is implemented.
-            let packager = sreg_eco_maven::MavenPackager;
+            let packager = sreg_eco_maven::MavenPackager::new().coords(args.coords.clone());
             publish::run_packager(
                 global,
                 &out,
