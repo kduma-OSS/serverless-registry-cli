@@ -345,6 +345,40 @@ pub struct ReindexResponse {
     pub manifests: u64,
 }
 
+/// A file in the generic feed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenericFeedFile {
+    /// File name.
+    pub name: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// Lower-case hex SHA-256.
+    pub sha256: String,
+    /// Labels of the file.
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
+    /// Download URL on the registry; answers with a redirect to the storage.
+    pub url: String,
+}
+
+/// `GET <registry>/generic/<name>/<version>` and `GET <registry>/generic/<name>/latest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenericFeedVersion {
+    /// Package name.
+    pub name: String,
+    /// Version.
+    pub version: String,
+    /// Publication time (RFC 3339).
+    pub published: String,
+    /// Whether the version is yanked.
+    pub yanked: bool,
+    /// Free-form metadata of the version.
+    #[serde(default)]
+    pub meta: serde_json::Value,
+    /// Files matching the requested labels.
+    pub files: Vec<GenericFeedFile>,
+}
+
 /// Type of an auth entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

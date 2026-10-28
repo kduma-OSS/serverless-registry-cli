@@ -7,6 +7,7 @@
 
 pub mod client;
 pub mod digest;
+pub mod download;
 pub mod error;
 pub mod models;
 pub mod oidc;

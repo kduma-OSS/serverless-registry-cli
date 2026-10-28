@@ -61,6 +61,15 @@ pub enum Error {
         code: String,
     },
 
+    /// A downloaded file does not match the size or digest listed by the registry.
+    #[error("downloaded file `{file}` is corrupt: {detail}")]
+    Integrity {
+        /// File name.
+        file: String,
+        /// What differs.
+        detail: String,
+    },
+
     /// The version being published already exists in the registry (`409`).
     #[error("this version already exists in the registry")]
     VersionExists,

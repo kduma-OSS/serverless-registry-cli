@@ -19,9 +19,10 @@ use crate::error::{Error, Result};
 use crate::models::{
     AddSecretRequest, AddSecretResponse, CreateCredentialRequest, CreateCredentialResponse,
     Credential, CredentialList, DeleteCredentialResponse, DeletePackageResponse,
-    DeleteVersionResponse, ErrorBody, ExpireSecretRequest, ExpireSecretResponse, Grant,
-    PackageEntry, PackageList, PublishCommitRequest, PublishCommitResponse, PublishInitRequest,
-    PublishInitResponse, ReindexResponse, UpdateGrantsRequest, VersionInfo, Whoami, YankResponse,
+    DeleteVersionResponse, ErrorBody, ExpireSecretRequest, ExpireSecretResponse,
+    GenericFeedVersion, Grant, PackageEntry, PackageList, PublishCommitRequest,
+    PublishCommitResponse, PublishInitRequest, PublishInitResponse, ReindexResponse,
+    UpdateGrantsRequest, VersionInfo, Whoami, YankResponse,
 };
 use crate::packager::Ecosystem;
 use crate::retry::{is_retryable, RetryPolicy};
@@ -142,13 +143,55 @@ impl Client {
     ///
     /// Each segment is percent-encoded on its own, so `/` in a package name becomes `%2F`.
     pub fn endpoint(&self, segments: &[&str]) -> Result<Url> {
+        let mut all = vec!["api", "v1"];
+        all.extend_from_slice(segments);
+        self.url(&all)
+    }
+
+    /// The URL made of `segments` under the registry URL, each percent-encoded.
+    pub fn url(&self, segments: &[&str]) -> Result<Url> {
         let mut url = self.base.clone();
         url.path_segments_mut()
             .map_err(|_| Error::InvalidInput(format!("invalid registry URL `{}`", self.base)))?
             .pop_if_empty()
-            .extend(["api", "v1"])
             .extend(segments);
         Ok(url)
+    }
+
+    /// The token this client authenticates with, if any. Never log it.
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
+    }
+
+    /// `GET <registry>/generic/<name>/<version>` (or `/latest`): one version of a
+    /// generic package from the generic feed.
+    ///
+    /// A `group/name` package name is sent as two path segments. Every label becomes a
+    /// `label=<key>:<value>` query parameter; `prerelease` adds `channel=prerelease`.
+    pub async fn generic_version(
+        &self,
+        name: &str,
+        version: &str,
+        labels: &[(String, String)],
+        prerelease: bool,
+    ) -> Result<GenericFeedVersion> {
+        let mut segments = vec!["generic"];
+        segments.extend(name.split('/'));
+        segments.push(version);
+        let mut url = self.url(&segments)?;
+        {
+            let mut query = url.query_pairs_mut();
+            for (key, value) in labels {
+                query.append_pair("label", &format!("{key}:{value}"));
+            }
+            if prerelease {
+                query.append_pair("channel", "prerelease");
+            }
+        }
+        if url.query() == Some("") {
+            url.set_query(None);
+        }
+        self.send_to(Method::GET, url, None, self.retry, None).await
     }
 
     /// `GET` an endpoint, retrying on transport errors, `5xx` and `429`.
@@ -335,6 +378,17 @@ impl Client {
         timeout: Option<Duration>,
     ) -> Result<T> {
         let url = self.endpoint(segments)?;
+        self.send_to(method, url, body, retry, timeout).await
+    }
+
+    async fn send_to<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<serde_json::Value>,
+        retry: RetryPolicy,
+        timeout: Option<Duration>,
+    ) -> Result<T> {
         let attempts = retry.attempts.max(1);
         let mut attempt = 1;
         loop {
