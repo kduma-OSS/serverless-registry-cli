@@ -292,6 +292,7 @@ interface Adapter {
   // read routing: returns an index file to filter or an archive key to redirect to
   route(req: Request, url: URL): IndexRoute | ArchiveRoute | null;
   // index filter for a credential: only versions covered by grants
+  // (editorial note: the implementation also passes the IndexRoute being served as a third argument)
   filterIndex(body: unknown, allowed: (name: string, version: string) => boolean): unknown;
   // configuration snippets for the home page
   clientConfig(baseUrl: string, token: string, packages: string[]): Snippet[];
@@ -302,6 +303,8 @@ interface Adapter {
   satisfies(version: string, constraint: string): boolean;
 }
 ```
+
+(editorial note: the sketch is abridged. The implemented interface in `src/adapters/types.ts` passes `buildIndex` an `IndexContext` with the public URL as a third argument and `filterIndex` the `IndexRoute` being served as a third argument, and adds members such as `fileUrl`, `versionUrl`, `compareVersions`, `validateRange` and the optional `supportsAppend`, `digests`, `buildListing`, `buildConfig`, `selectFile`, `finalizeResponse`, `storedName`, `storedVersion` and `displayName`.)
 
 **Composer** (`/composer/…`)
 
@@ -434,7 +437,7 @@ One HTML + CSS application with minimal vanilla JS (only `fetch` to `/api/v1`), 
 
 - Packages: all of them, with versions; yank, delete and reindex actions (confirmation through a browser dialog).
 - Credentials: list of projects with the number of active secrets and the nearest expiry date; a creation form (name, kind as a read/publish/admin radio, grants as eco/package/versions rows – hidden for admin); editing grants; "add secret" shows the new token once; "expire" sets `expires` on the old one; deleting a project.
-- Settings: read-only – Worker version, flags from `vars`, a link to the latest release on GitHub (if `CHECK_UPDATES=true`).
+- Settings: read-only – Worker version, flags from `vars` (editorial note: an unset variable shows the default the Worker uses, marked as such), a link to the latest release on GitHub (if `CHECK_UPDATES=true`).
 
 **First run**: no credential at all in KV → the page shows a "create admin" form (name + generated secret, shown once). Once the first credential of kind `admin` is created, the form disappears permanently. Without this, the user would have to type hashes into KV by hand.
 
