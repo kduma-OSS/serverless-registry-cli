@@ -1,0 +1,92 @@
+# cargo-dist custom job (`post-announce-jobs = ["./release-action"]` in dist-workspace.toml),
+# called by release.yml after the GitHub Release is published. For a stable release it
+# starts the Release workflow of kduma-OSS/serverless-registry-publish-action with the new
+# release as the action's default `sreg-version` (a patch release of the action).
+#
+# It authenticates as a GitHub App (repository variable RELEASE_APP_ID, secret
+# RELEASE_APP_PRIVATE_KEY) that may only start workflows in the action repository. Without
+# them, or when the dispatch fails, it only prints a notice: the action repository checks
+# for new sreg releases every hour and releases itself. See docs/releasing.md.
+name: Release the action
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ACTION_REPOSITORY: kduma-OSS/serverless-registry-publish-action
+
+jobs:
+  dispatch:
+    name: Start the action release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the release
+        id: release
+        env:
+          PLAN: ${{ inputs.plan }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag=$(jq -r '.announcement_tag // empty' <<< "$PLAN")
+          prerelease=$(jq -r '.announcement_is_prerelease // false' <<< "$PLAN")
+          tag="${tag:-$REF_NAME}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Cannot tell the released version: '$tag' is not a vX.Y.Z tag."
+            exit 1
+          fi
+          stable=true
+          if [ "$prerelease" = true ] || [[ "$tag" == *-* ]]; then
+            echo "::notice::$tag is a prerelease; the action keeps its default sreg release."
+            stable=false
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
+
+      - name: Check the GitHub App
+        id: app
+        if: steps.release.outputs.stable == 'true'
+        env:
+          APP_ID: ${{ vars.RELEASE_APP_ID }}
+          HAS_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ -n "$APP_ID" ] && [ "$HAS_KEY" = true ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY is not set, so the action release is not started from here; the action repository syncs itself within an hour."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mint a token for the action repository
+        id: token
+        if: steps.app.outputs.configured == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: kduma-OSS
+          repositories: serverless-registry-publish-action
+
+      - name: Start the Release workflow of the action
+        if: steps.app.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::Could not mint a GitHub App token; the action repository syncs itself within an hour."
+            exit 0
+          fi
+          if gh workflow run release.yml -R "$ACTION_REPOSITORY" \
+            -f sreg-version="$TAG" -f bump=patch -f only-if-newer-sreg=true; then
+            echo "::notice::Started the release of $ACTION_REPOSITORY with sreg $TAG as its default."
+            echo "Started the [Release workflow]($GITHUB_SERVER_URL/$ACTION_REPOSITORY/actions/workflows/release.yml) of \`$ACTION_REPOSITORY\` with \`sreg-version: $TAG\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Could not start the release of $ACTION_REPOSITORY; it syncs itself within an hour."
+          fi

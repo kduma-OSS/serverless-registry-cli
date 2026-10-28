@@ -20,5 +20,8 @@ install-path = "CARGO_HOME"
 checksum = "sha256"
 # Which actions to run on pull requests
 pr-run-mode = "plan"
+# After the GitHub Release: start the release of the GitHub Action with the new sreg as its
+# default (.github/workflows/release-action.yml; see docs/releasing.md)
+post-announce-jobs = ["./release-action"]
 # Only the packages that opt in with `[package.metadata.dist] dist = true` are released
 dist = false
