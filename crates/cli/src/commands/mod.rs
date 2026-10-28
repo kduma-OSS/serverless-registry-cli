@@ -57,7 +57,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Npm {
             command: NpmCommand::Publish(args),
         } => {
-            let packager = sreg_eco_npm::NpmPackager;
+            let packager = sreg_eco_npm::NpmPackager::new().workspace(args.workspace.clone());
             publish::run_packager(
                 global,
                 &out,

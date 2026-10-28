@@ -215,6 +215,11 @@ pub struct NpmPublishArgs {
     #[arg(long, value_name = "TAG")]
     pub tag: Option<String>,
 
+    /// Publish this workspace (a name or a path) of the project in the current
+    /// directory: `npm pack -w <WORKSPACE>`
+    #[arg(long, value_name = "WORKSPACE")]
+    pub workspace: Option<String>,
+
     /// Extra arguments passed verbatim to `npm pack`
     #[arg(last = true, value_name = "NPM_ARGS")]
     pub npm_args: Vec<std::ffi::OsString>,
@@ -513,6 +518,26 @@ mod tests {
             panic!("expected npm publish");
         };
         assert_eq!(args.npm_args, ["--workspace", "a"]);
+        assert_eq!(args.workspace, None);
+
+        let cli = Cli::try_parse_from([
+            "sreg",
+            "npm",
+            "publish",
+            "--workspace",
+            "packages/sdk",
+            "--tag",
+            "beta",
+        ])
+        .unwrap();
+        let Command::Npm {
+            command: NpmCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected npm publish");
+        };
+        assert_eq!(args.workspace.as_deref(), Some("packages/sdk"));
+        assert_eq!(args.tag.as_deref(), Some("beta"));
 
         let cli = Cli::try_parse_from([
             "sreg",

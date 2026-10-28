@@ -1,0 +1,12 @@
+{
+  "name": "@acme/demo",
+  "version": "0.1.0",
+  "description": "Demo package for the sreg tests",
+  "keywords": ["acme", "demo"],
+  "license": "MIT",
+  "main": "index.js",
+  "files": ["index.js"],
+  "dependencies": {
+    "@acme/util": "^1.0.0"
+  }
+}

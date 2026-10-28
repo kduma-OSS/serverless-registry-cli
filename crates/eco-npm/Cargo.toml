@@ -9,4 +9,14 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+flate2.workspace = true
+semver.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
 sreg-core.workspace = true
+tar.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+flate2.workspace = true
+tar.workspace = true

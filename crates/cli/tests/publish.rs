@@ -2,13 +2,17 @@
 
 mod common;
 
+#[cfg(any(feature = "composer", feature = "generic"))]
 use common::sreg;
+use common::sreg_in;
 use predicates::prelude::*;
 use wiremock::MockServer;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn packaging_failures_stop_before_contacting_the_registry() {
     let server = MockServer::start().await;
+    // An empty directory: there is no project to package for any ecosystem.
+    let empty = tempfile::tempdir().unwrap();
 
     let ecosystems = [
         #[cfg(feature = "composer")]
@@ -21,8 +25,9 @@ async fn packaging_failures_stop_before_contacting_the_registry() {
         "nuget",
     ];
     for eco in ecosystems {
-        sreg(
+        sreg_in(
             &server,
+            empty.path(),
             &[eco, "publish", "--version", "1.0.0", "--dry-run"],
         )
         .await

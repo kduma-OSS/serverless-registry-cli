@@ -1,0 +1,1 @@
+notes.txt is not listed in files and must stay out of the tarball

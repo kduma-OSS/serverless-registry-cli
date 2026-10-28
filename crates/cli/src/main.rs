@@ -67,7 +67,9 @@ fn init_logging(verbose: u8) {
         .with_target("sreg_core", level)
         .with_target("sreg_eco_composer", level)
         .with_target("sreg_eco_npm", level)
-        .with_target("sreg_eco_cargo", level);
+        .with_target("sreg_eco_cargo", level)
+        .with_target("sreg_eco_nuget", level)
+        .with_target("sreg_eco_generic", level);
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()

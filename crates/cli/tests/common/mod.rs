@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+use std::path::Path;
+
 use assert_cmd::assert::Assert;
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
@@ -16,7 +18,22 @@ pub async fn sreg(server: &MockServer, args: &[&str]) -> Assert {
 
 /// Like [`sreg`] with extra environment variables.
 pub async fn sreg_with(server: &MockServer, args: &[&str], env: &[(&str, &str)]) -> Assert {
+    run(server, None, args, env).await
+}
+
+/// Like [`sreg`], run in the directory `dir`.
+pub async fn sreg_in(server: &MockServer, dir: &Path, args: &[&str]) -> Assert {
+    run(server, Some(dir), args, &[]).await
+}
+
+async fn run(
+    server: &MockServer,
+    dir: Option<&Path>,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Assert {
     let uri = server.uri();
+    let dir = dir.map(Path::to_path_buf);
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let env: Vec<(String, String)> = env
         .iter()
@@ -32,6 +49,9 @@ pub async fn sreg_with(server: &MockServer, args: &[&str], env: &[(&str, &str)])
             .env_remove("ACTIONS_ID_TOKEN_REQUEST_TOKEN");
         for (name, value) in env {
             command.env(name, value);
+        }
+        if let Some(dir) = dir {
+            command.current_dir(dir);
         }
         command.assert()
     })
