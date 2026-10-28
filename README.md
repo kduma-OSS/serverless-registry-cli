@@ -1,13 +1,14 @@
 # sreg
 
 `sreg` is the command-line tool of **Serverless Registry**, a private, serverless
-package registry for Composer, npm, cargo, NuGet and generic files hosted on Cloudflare
-(Workers, R2 and KV).
+package registry for Composer, npm, cargo, NuGet, Swift, Maven and generic files hosted
+on Cloudflare (Workers, R2 and KV).
 
 `sreg` is the only way to publish a version. It packages the project (natively for
-Composer, through `npm pack`, `cargo package` and `dotnet pack` for npm, cargo and
-NuGet), uploads the files straight to R2 through presigned URLs and commits the version
-through the registry's API. Published versions are immutable. It also downloads generic
+Composer, through `npm pack`, `cargo package`, `dotnet pack` and `swift package
+archive-source` for npm, cargo, NuGet and Swift; Maven and Gradle builds deploy into a
+local directory that `sreg` publishes from), uploads the files straight to R2 through
+presigned URLs and commits the version through the registry's API. Published versions are immutable. It also downloads generic
 files and writes credentials for package managers, including GitHub Actions OIDC
 tokens. Administration (credentials, yank, delete) is done in the registry's web panel;
 `sreg` has no administrative commands.
@@ -16,8 +17,9 @@ The registry itself lives in the
 [`serverless-registry-worker`](https://github.com/kduma-OSS/serverless-registry-worker)
 repository.
 
-> **Work in progress.** The HTTP client, the publish flow, `composer`, `npm`, `cargo` and
-> `nuget publish`, `whoami`, `auth`, `version` and the generic commands work.
+> **Work in progress.** The HTTP client, the publish flow, `composer`, `npm`, `cargo`,
+> `nuget`, `swift` and `maven publish`, `whoami`, `auth`, `version` and the generic
+> commands work.
 
 ## Commands
 
@@ -27,12 +29,12 @@ repository.
 | `sreg npm publish [--version <v> \| --tag-prefix <p>] [--tag <t>] [--workspace <w>] [-- <npm pack args>]` | Writes the version into `package.json` with `npm pkg set version=<v>` (when one is requested), runs `npm pack --json --pack-destination <tmp>` in the current directory and reads `package/package.json` from the tarball. Scoped packages only. `--tag` sets the dist-tag. See [Publishing an npm package](#publishing-an-npm-package). |
 | `sreg cargo publish [--version <v> \| --tag-prefix <p>] [--package <crate>] [-- <cargo package args>]` | Writes the version into the crate's `Cargo.toml` (formatting preserved), runs `cargo package --no-verify --allow-dirty -p <crate> --target-dir <tmp>` and describes the crate with a sparse-index line built from `cargo metadata`. See [Publishing a crate](#publishing-a-crate). |
 | `sreg nuget publish [--version <v> \| --tag-prefix <p>] [--project <csproj>] [--no-symbols] [-- <dotnet pack args>]` | Runs `dotnet pack <project> -o <tmp>` (the version as `-p:PackageVersion=<v>`), reads the `.nuspec` from the `.nupkg` and publishes the `.nupkg` and, unless `--no-symbols`, the `.snupkg`. See [Publishing a NuGet package](#publishing-a-nuget-package). |
-| `sreg swift publish [--version <v> \| --tag-prefix <p>] [--path <dir>]` | Not implemented yet (exits with `1`). |
-| `sreg maven publish [--version <v> \| --tag-prefix <p>] --from-dir <dir> [--coords <group:artifact>]` | Not implemented yet (exits with `1`). |
+| `sreg swift publish --scope <scope> [--version <v> \| --tag-prefix <p>] [--path .] [--repository-url <url>] [-- <archive-source args>]` | Describes the package with `swift package dump-package`, archives it with `swift package archive-source -o <tmp>/<name>-<version>.zip` and publishes the zip with `Package.swift` and its `Package@swift-*.swift` variants as `<scope>.<name>`. The version comes from `--version` or the release tag on `HEAD`. See [Publishing a Swift package](#publishing-a-swift-package). |
+| `sreg maven publish [--version <v> \| --tag-prefix <p>] --from-dir <dir> [--coords <group:artifact>]` | Publishes one artifact version from a local Maven repository the build deployed to (`mvn deploy -DaltDeploymentRepository=local::file:./out`, or Gradle's `publish` to a `file://` repository): the effective POM as the manifest, the archive, sources, javadoc, Gradle module metadata and other files of the version directory. Arguments after `--` are rejected. See [Publishing Maven artifacts](#publishing-maven-artifacts). |
 | `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... [--meta-file <json>] [--spec <files.json>] [--no-append]` | Publishes files as one version of a generic package. `--label` applies to every file; `--spec` lists files with their own labels instead. Files are appended to an already published version (within the registry's append window) unless `--no-append` is given. Arguments after `--` are rejected. |
 | `sreg generic get <name> [<version>\|latest] [--label k=v]... [--out <dir>] [--prerelease]` | Downloads the files of a version matching the labels into `--out` after verifying size and SHA-256 and prints their paths; `--json` prints the feed entry without downloading. |
 | `sreg whoami` | Shows the identity and grants of the current token (`GET /api/v1/whoami`). |
-| `sreg auth <composer\|npm\|cargo\|nuget> [--oidc [--project <p>]] [--write <file>] [--registry-name <n>]` | Writes credentials to `auth.json`, `.npmrc`, `credentials.toml` or `nuget.config`, or prints them for the environment (e.g. as `COMPOSER_AUTH`, or a `dotnet nuget add source` command). With `--oidc`, inside a GitHub Actions job with `id-token: write`, it fetches a JWT for the registry and builds a `<project>:gh.<jwt>` token (`_:gh.<jwt>` without `--project`: the registry then finds the project from the repository the token was issued to); without it, it uses `REGISTRY_TOKEN`. See [`docs/cli-auth.md`](docs/cli-auth.md). |
+| `sreg auth <composer\|npm\|cargo\|nuget\|swift\|maven> [--oidc [--project <p>]] [--write <file>] [--registry-name <n>]` | Writes credentials to `auth.json`, `.npmrc`, `credentials.toml`, `nuget.config`, `.netrc` or `settings.xml`, or prints them for the environment (e.g. as `COMPOSER_AUTH`, a `dotnet nuget add source` or `swift package-registry login` command, or Maven `settings.xml` and Gradle snippets). With `--oidc`, inside a GitHub Actions job with `id-token: write`, it fetches a JWT for the registry and builds a `<project>:gh.<jwt>` token (`_:gh.<jwt>` without `--project`: the registry then finds the project from the repository the token was issued to); without it, it uses `REGISTRY_TOKEN`. See [`docs/cli-auth.md`](docs/cli-auth.md). |
 | `sreg version` | Prints the version of `sreg` and, with `--registry`, the registry's version and the minimum client version it accepts. |
 
 Every publish command computes the SHA-256 digest and size of each file, calls `init`,
@@ -44,9 +46,9 @@ the output is `{ "skipped": true, "eco", "name", "version" }`), and `--oidc` wit
 optional `--oidc-project <p>` (authenticate with a GitHub Actions OIDC token instead of
 `REGISTRY_TOKEN`: `<p>:gh.<jwt>`, or `_:gh.<jwt>` without `--oidc-project`, which lets
 the registry find the project from the repository the token was issued to;
-`sreg generic get` accepts them too; `sreg auth` calls the project `--project`). The composer, npm, cargo and nuget publish commands also accept
-`--tag-prefix <p>` instead of `--version`: the version is then taken from the tag on
-`HEAD` that starts with the prefix.
+`sreg generic get` accepts them too; `sreg auth` calls the project `--project`). The composer, npm, cargo, nuget, swift and maven publish commands also
+accept `--tag-prefix <p>` instead of `--version`: the version is then taken from the tag
+on `HEAD` that starts with the prefix.
 
 ### Packaging: what `sreg` calls
 
@@ -61,6 +63,8 @@ result and uploads it itself. The flags `sreg` sets are reserved and rejected af
 | npm | `npm pack` | `--json`, `--pack-destination <tmp>`, `-w <pkg>` from `--workspace` | `--ignore-scripts` |
 | cargo | `cargo package` | `--no-verify`, `--allow-dirty`, `-p <crate>` from `--package`, `--target-dir <tmp>` | `--features`, `--locked`, `--manifest-path` |
 | nuget | `dotnet pack <project>` | `-o <tmp>`, `-p:PackageVersion=<v>` from `--version` | `-c Release`, `--no-build`, `--include-symbols` |
+| swift | `swift package dump-package`, then `swift package archive-source` (both in `--path`) | `-o <tmp>/<name>-<version>.zip`; `--package-path` is reserved too (use `--path`) | `--verbose` |
+| maven | none – the build deploys into `--from-dir` first | – | – |
 | generic | none – the files are ready | – | – |
 
 ### Monorepos
@@ -78,11 +82,15 @@ directory of the repository; several packages are several calls (a loop or a mat
 - nuget: `--project <path to .csproj>`; without it, the single project file in the
   current directory. Solutions (`.sln`) are refused, because they produce several
   packages.
+- swift: `--path packages/Kit` (the directory with `Package.swift`).
+- maven: `--coords <groupId>:<artifactId>` selects one artifact when the build deployed
+  several modules into `--from-dir`.
 - Version: `--version <v>`, or the release tag on `HEAD`. Tag the packages with a
   prefix (`sdk/v1.2.0`, `cli-v0.4.0`) and pass `--tag-prefix sdk/v`; without
   `--tag-prefix` only `v<semver>` tags are considered, and more than one on `HEAD` is an
   error. npm, cargo and nuget fall back to the version in the project's own manifest
-  when `HEAD` carries no `v<semver>` tag (composer requires a tag or `--version`).
+  when `HEAD` carries no `v<semver>` tag (composer and swift require a tag or
+  `--version`; maven falls back to the only version directory in `--from-dir`).
 
 When `sreg` writes the version into `package.json` or `Cargo.toml` it says so on stderr
 (`note: set the version in …`); the change is left in the working tree.
@@ -209,6 +217,164 @@ sreg nuget publish --project src/Acme.Sdk/Acme.Sdk.csproj --tag-prefix sdk/v --n
   given. Legacy `.symbols.nupkg` packages are ignored.
 - The manifest holds the id, version, description, authors, project URL, license
   expression, tags and dependency groups of the `.nuspec`, plus the `.nuspec` itself.
+
+## Publishing a Swift package
+
+```
+git tag v1.2.0
+sreg swift publish --scope acme                       # acme.DemoKit 1.2.0 from the tag
+sreg swift publish --scope acme --version 1.3.0-beta.1
+sreg swift publish --scope acme --path packages/Kit --tag-prefix kit/v
+```
+
+- **Name**: Swift packages have no scope of their own, so `--scope` is required
+  (1 to 39 characters of `A-Z`, `a-z`, `0-9` and `-`); the name is `name` in
+  `Package.swift` as reported by `swift package dump-package` (1 to 100 characters of
+  `A-Z`, `a-z`, `0-9`, `_` and `-`). The package is published as `<scope>.<name>`.
+- **Version**: `Package.swift` has no version, so it comes from `--version` or the release
+  tag on `HEAD` (`v1.2.0`, or `<prefix>1.2.0` with `--tag-prefix`); without either, the
+  command fails. Versions are semver 2 without a leading `v`.
+- **Files**: the zip that `swift package archive-source` writes (it archives the
+  committed state of a git repository) is uploaded as `<name>-<version>.zip`; `Package.swift`
+  and every `Package@swift-<version>.swift` next to it are uploaded as `manifest` files.
+- **Manifest**: the tools version, the repository URL (`--repository-url`, or the URL of
+  the `origin` remote without any credentials in it) and the complete output of
+  `swift package dump-package`.
+- Consumers point SwiftPM at `<registry>/swift` with
+  `swift package-registry set <registry>/swift --scope acme` and log in with
+  `sreg auth swift` (see [`docs/cli-auth.md`](docs/cli-auth.md)).
+
+In GitHub Actions (macOS runners come with Swift):
+
+```yaml
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  swift:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # sreg must be on PATH, e.g. installed from the GitHub releases
+      - run: sreg swift publish --scope acme --oidc --skip-existing
+        env:
+          REGISTRY_URL: https://packages.example.com
+```
+
+## Publishing Maven artifacts
+
+`sreg` does not run Maven or Gradle. Let the build deploy into a local directory (a
+Maven-2 file repository) and publish one artifact version from it:
+
+```
+# Maven
+mvn -B deploy -DaltDeploymentRepository=local::file:./out
+sreg maven publish --from-dir out --coords com.acme:sdk
+
+# Gradle, with a maven-publish repository pointing at a file:// URL (below)
+./gradlew publish
+sreg maven publish --from-dir build/repo --coords com.acme:sdk --version 1.4.0
+```
+
+With Gradle, declare the local repository next to the publication:
+
+```kotlin
+// build.gradle.kts
+plugins {
+    `java-library`
+    `maven-publish`
+}
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+        }
+    }
+    repositories {
+        maven {
+            name = "local"
+            url = uri(layout.buildDirectory.dir("repo")) // a file:// URL
+        }
+    }
+}
+```
+
+- **Artifact**: `sreg` looks for `<group/as/path>/<artifactId>/<version>/<artifactId>-<version>.pom`
+  under `--from-dir`. When the build deployed several artifacts (a multi-module build),
+  select one with `--coords <groupId>:<artifactId>`; publish each module with its own call.
+  The package name in the registry is `<groupId>:<artifactId>`.
+- **Version**: `--version` or the release tag on `HEAD` selects the version directory;
+  without either, the directory must hold exactly one version. `sreg` does not change the
+  build: the version the build used must be the one being published. `-SNAPSHOT` versions
+  are rejected.
+- **POM**: it must be an effective POM: a `<parent>`, or a `${…}` property in the
+  coordinates, packaging or dependencies, is rejected. Gradle writes resolved POMs; with
+  Maven, deploy a flattened POM (for example with the `flatten-maven-plugin`) and check
+  it with `mvn help:effective-pom`. The POM's `groupId`, `artifactId` and `version` must
+  match its location.
+- **Files**: every file of the version directory except checksums (`.sha1`, `.md5`,
+  `.sha256`, `.sha512`), signatures (`.asc`) and `maven-metadata*.xml`, with a role taken
+  from its name: `<artifactId>-<version>.pom` is the `pom`, the file with the packaging's
+  extension the `archive` (`jar` for `jar`, `maven-plugin`, `ejb` and `bundle`; `aar`,
+  `war`, `ear` as they are; none for `pom` packaging), `-sources.jar` the `sources`,
+  `-javadoc.jar` the `javadoc`, `.module` the Gradle `module` metadata, and anything
+  else (classified jars, distributions) `extra`.
+- **Manifest**: `groupId`, `artifactId`, `version`, `packaging` (default `jar`), the POM
+  itself, and the project's dependencies with their `scope` (default `compile`) and
+  `optional` flag (`<dependencyManagement>` is ignored).
+- Consumers configure credentials with `sreg auth maven` (a `settings.xml` `<server>` or a
+  Gradle `credentials` block, see [`docs/cli-auth.md`](docs/cli-auth.md)).
+
+In GitHub Actions:
+
+```yaml
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  maven:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: mvn -B deploy -DskipTests -DaltDeploymentRepository=local::file:./out
+      # sreg must be on PATH, e.g. installed from the GitHub releases
+      - run: sreg maven publish --from-dir out --coords com.acme:sdk --skip-existing
+        env:
+          REGISTRY_URL: https://packages.example.com
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_PUBLISH_TOKEN }}
+
+  gradle:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew publish -Pversion="${GITHUB_REF_NAME#v}"
+      - run: sreg maven publish --from-dir build/repo --oidc --skip-existing
+        env:
+          REGISTRY_URL: https://packages.example.com
+```
 
 ## Publishing from GitHub Actions
 

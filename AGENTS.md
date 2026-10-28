@@ -1,9 +1,10 @@
 # Guidelines for contributors and AI agents
 
 This repository contains `sreg`, the command-line tool of **Serverless Registry**: a
-private, serverless package registry for Composer, npm and cargo hosted on Cloudflare.
-`sreg` is the only way to publish a version; it packages a project, uploads the archive
-straight to R2 through a presigned URL and commits the version through the Worker's API.
+private, serverless package registry for Composer, npm, cargo, NuGet, Swift, Maven and
+generic files hosted on Cloudflare. `sreg` is the only way to publish a version; it
+packages a project, uploads the archive straight to R2 through a presigned URL and
+commits the version through the Worker's API.
 The Worker lives in the `serverless-registry-worker` repository.
 
 Read these before changing anything:
@@ -30,8 +31,8 @@ crates/
   eco-cargo/     # packaging through `cargo package` and manifest extraction
   eco-nuget/     # packaging through `dotnet pack` and `.nuspec` extraction
   eco-generic/   # arbitrary files as generic package versions
-  eco-swift/     # Swift packaging (stub)
-  eco-maven/     # Maven packaging (stub)
+  eco-swift/     # packaging through `swift package archive-source` and `dump-package`
+  eco-maven/     # Maven artifacts from a local file repository, effective POM parsing
   cli/           # clap command tree, text and `--json` output, exit codes
 action/          # composite GitHub Action wrapping the published binaries
 dist-workspace.toml  # cargo-dist release configuration
@@ -73,8 +74,8 @@ Before every commit run fmt, clippy and the tests. A commit must leave the tree 
   `type(scope)?: description`. Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`,
   `test`, `chore`, `build`, `ci`, `perf`, `revert`. Use the lower-case imperative mood and
   keep the subject under 72 characters.
-- Scopes used here: `core`, `cli`, `composer`, `npm`, `cargo`, `action`, `dist`, `deps`,
-  `ci`, `docs`.
+- Scopes used here: `core`, `cli`, `composer`, `npm`, `cargo`, `nuget`, `generic`, `swift`,
+  `maven`, `action`, `dist`, `deps`, `ci`, `docs`.
 - Make small, focused commits. One logical change per commit; a feature plus its tests is
   one commit, two unrelated features are two commits.
 - **Never** add `Co-Authored-By` trailers. The `commit-msg` hook rejects them.

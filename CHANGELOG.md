@@ -55,26 +55,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Without `--version` and `--tag-prefix`, npm, cargo and nuget use the `v<semver>` tag on
   `HEAD` when there is one and the version of the project's manifest otherwise; changes
   `sreg` makes to `package.json` or `Cargo.toml` are reported on stderr.
-- Swift and Maven ecosystems (`Ecosystem::Swift`, `Ecosystem::Maven`), the stub crates
-  `sreg-eco-swift` and `sreg-eco-maven`, the Cargo features `swift` and `maven`, and the
-  commands `sreg swift publish` and `sreg maven publish --from-dir <dir>
-  [--coords <group:artifact>]`, which are not implemented yet.
+- Swift and Maven ecosystems (`Ecosystem::Swift`, `Ecosystem::Maven`), the crates
+  `sreg-eco-swift` and `sreg-eco-maven` and the Cargo features `swift` and `maven`.
+- Swift packaging (`sreg swift publish --scope <scope>`): `swift package dump-package`,
+  then `swift package archive-source -o <tmp>/<name>-<version>.zip`; published as
+  `<scope>.<name>` with the zip as `archive` and `Package.swift` plus every
+  `Package@swift-*.swift` as `manifest` files; the version from `--version` or the release
+  tag (required, Package.swift has none); the manifest holds the tools version, the
+  repository URL (`--repository-url` or the `origin` remote without credentials) and the
+  dump; arguments after `--` go to `archive-source` (`-o`, `--output` and
+  `--package-path` are reserved).
+- Maven publishing (`sreg maven publish --from-dir <dir> [--coords <group:artifact>]`):
+  one artifact version from a local Maven-2 file repository written by `mvn deploy
+  -DaltDeploymentRepository=local::file:./out` or Gradle's `publish` to a `file://`
+  repository; `--coords` selects the artifact, `--version` or the release tag the version
+  directory (otherwise the only one); effective POMs only (`<parent>` and `${…}`
+  properties rejected), no `-SNAPSHOT` versions; the files of the version directory
+  without checksums, signatures and `maven-metadata*.xml`, with the roles `pom`,
+  `archive`, `sources`, `javadoc`, `module` and `extra`; the coordinates, packaging,
+  dependencies and the POM itself as the manifest.
 - Release tag selection shared by all packagers (`sreg_core::git`): exactly one tag
   `v<semver>` on `HEAD`, or `<prefix><semver>` with `--tag-prefix <prefix>`.
 - `--skip-existing` on every publish command: an already published version (or appended
   file) exits with `0` and reports `{ "skipped": true, ... }` with `--json`.
-- Arguments after `--` on `sreg npm|cargo|nuget publish` are passed verbatim to the
-  packaging tool; composer and generic publishing reject them.
+- Arguments after `--` on `sreg npm|cargo|nuget|swift publish` are passed verbatim to the
+  packaging tool; composer, maven and generic publishing reject them.
 - `CommandRunner` abstraction for packagers that run external tools, and temporary work
   directories owned by the packages they belong to.
 - `sreg generic publish` and `sreg generic get`.
-- `sreg whoami`, `sreg version` and `sreg auth <composer|npm|cargo|nuget>` (see
-  `docs/cli-auth.md`), with text and `--json` output.
+- `sreg whoami`, `sreg version` and `sreg auth <composer|npm|cargo|nuget|swift|maven>`
+  (see `docs/cli-auth.md`), with text and `--json` output; `sreg auth swift` prints a
+  `swift package-registry login` command or writes a `.netrc` entry, `sreg auth maven`
+  prints `settings.xml` and Gradle snippets or merges a `<server>` into `settings.xml`.
 - Exit codes `0` success, `1` error, `2` already published, `3` client too old (with the
   minimum version and a link to the releases).
-- Cargo features `composer`, `npm`, `cargo`, `nuget` and `generic` (all on by default).
-- CI workflow running fmt, clippy, tests, an MSRV check, a single-ecosystem build and
-  release builds.
+- Cargo features `composer`, `npm`, `cargo`, `nuget`, `generic`, `swift` and `maven` (all on
+  by default).
+- CI workflow running fmt, clippy, tests, an MSRV check, a build and the tests of every
+  single ecosystem feature (and of none), and release builds.
 
 ### Changed
 
