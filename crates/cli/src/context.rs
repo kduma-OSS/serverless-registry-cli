@@ -27,6 +27,7 @@ pub async fn token(
 ) -> anyhow::Result<String> {
     Ok(resolve_token(TokenFlags {
         token: global.token.as_deref(),
+        url_token: None,
         oidc,
         project,
         registry,

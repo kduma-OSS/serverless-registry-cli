@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 hex.workspace = true
+percent-encoding.workspace = true
 reqwest.workspace = true
 semver.workspace = true
 serde.workspace = true

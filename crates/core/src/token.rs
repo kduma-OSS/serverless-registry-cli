@@ -14,6 +14,9 @@ pub const RESOLVE_PROJECT_LOGIN: &str = "_";
 pub struct TokenFlags<'a> {
     /// `--token` or `REGISTRY_TOKEN`.
     pub token: Option<&'a str>,
+    /// The credentials from the registry URL's userinfo
+    /// ([`RegistryUrl::token`](crate::RegistryUrl::token)).
+    pub url_token: Option<&'a str>,
     /// `--oidc`: build the token from a GitHub Actions OIDC token.
     pub oidc: bool,
     /// `--project`: the project the OIDC token is issued for; `None` lets the registry
@@ -27,8 +30,9 @@ pub struct TokenFlags<'a> {
 ///
 /// With `oidc`, requests a GitHub Actions OIDC token with the registry URL as audience
 /// and returns `<project>:gh.<jwt>`, or `_:gh.<jwt>` without a project, which lets the
-/// registry find the project from the token's `repository` claim. Otherwise returns
-/// `token`.
+/// registry find the project from the token's `repository` claim; the other sources are
+/// ignored. Otherwise returns `token` or, without it, `url_token`. When both are given
+/// and differ, fails rather than guessing which one is meant.
 pub async fn resolve_token(flags: TokenFlags<'_>) -> Result<String> {
     if flags.oidc {
         let login = match flags.project {
@@ -42,17 +46,26 @@ pub async fn resolve_token(flags: TokenFlags<'_>) -> Result<String> {
         return Ok(compose_token(login, &jwt));
     }
 
-    match flags.token.map(str::trim) {
-        Some(token) if !token.is_empty() => {
-            Token::login(token)?;
-            Ok(token.to_owned())
+    let explicit = flags.token.map(str::trim).filter(|token| !token.is_empty());
+    let token = match (explicit, flags.url_token) {
+        (Some(explicit), Some(url)) if explicit != url => {
+            return Err(Error::InvalidInput(
+                "--token/REGISTRY_TOKEN and the credentials in the registry URL differ: pass \
+                 the token only once"
+                    .into(),
+            ))
         }
-        _ => Err(Error::InvalidInput(
-            "no token: pass --token or set REGISTRY_TOKEN (in GitHub Actions you can use \
-             --oidc instead)"
-                .into(),
-        )),
-    }
+        (Some(token), _) | (None, Some(token)) => token,
+        (None, None) => {
+            return Err(Error::InvalidInput(
+                "no token: pass --token, set REGISTRY_TOKEN or put the credentials in the \
+                 registry URL (in GitHub Actions you can use --oidc instead)"
+                    .into(),
+            ))
+        }
+    };
+    Token::login(token)?;
+    Ok(token.to_owned())
 }
 
 /// The OIDC audience for a registry: its URL without query, fragment and trailing
@@ -124,6 +137,7 @@ mod tests {
     fn flags<'a>(registry: &'a Url, token: Option<&'a str>) -> TokenFlags<'a> {
         TokenFlags {
             token,
+            url_token: None,
             oidc: false,
             project: None,
             registry,
@@ -167,11 +181,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn url_credentials_are_used_without_an_explicit_token() {
+        let registry = registry();
+        let url_flags = |token| TokenFlags {
+            url_token: Some("shop:from-url"),
+            ..flags(&registry, token)
+        };
+
+        for token in [None, Some(""), Some(" \n")] {
+            let resolved = resolve_token(url_flags(token)).await.unwrap();
+            assert_eq!(resolved, "shop:from-url", "{token:?}");
+        }
+        // The same token twice is not a conflict.
+        let resolved = resolve_token(url_flags(Some("shop:from-url\n")))
+            .await
+            .unwrap();
+        assert_eq!(resolved, "shop:from-url");
+    }
+
+    #[tokio::test]
+    async fn differing_explicit_and_url_tokens_are_rejected() {
+        let registry = registry();
+        let err = resolve_token(TokenFlags {
+            url_token: Some("shop:from-url"),
+            ..flags(&registry, Some("shop:explicit"))
+        })
+        .await
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("differ"), "{message}");
+        assert!(!message.contains("shop:"), "{message}");
+    }
+
+    #[tokio::test]
     async fn oidc_rejects_an_invalid_project() {
         let registry = registry();
         for project in [Some("Shop:x"), Some(""), Some("_")] {
             let err = resolve_token(TokenFlags {
                 token: None,
+                url_token: None,
                 oidc: true,
                 project,
                 registry: &registry,
@@ -206,6 +254,7 @@ mod tests {
         let token = runtime
             .block_on(resolve_token(TokenFlags {
                 token: Some("ignored:token"),
+                url_token: Some("ignored:url"),
                 oidc: true,
                 project: Some("ci-acme-sdk"),
                 registry: &registry,
@@ -217,6 +266,7 @@ mod tests {
         let token = runtime
             .block_on(resolve_token(TokenFlags {
                 token: None,
+                url_token: None,
                 oidc: true,
                 project: None,
                 registry: &registry,
