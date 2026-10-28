@@ -1625,6 +1625,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sreg-eco-generic"
+version = "0.1.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "sreg-core",
+ "tempfile",
+]
+
+[[package]]
 name = "sreg-eco-npm"
 version = "0.1.0"
 dependencies = [

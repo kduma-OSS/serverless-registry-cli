@@ -5,6 +5,7 @@ members = [
     "crates/eco-composer",
     "crates/eco-npm",
     "crates/eco-cargo",
+    "crates/eco-generic",
     "crates/cli",
 ]
 
@@ -21,6 +22,7 @@ sreg-core = { path = "crates/core", version = "0.1.0" }
 sreg-eco-composer = { path = "crates/eco-composer", version = "0.1.0" }
 sreg-eco-npm = { path = "crates/eco-npm", version = "0.1.0" }
 sreg-eco-cargo = { path = "crates/eco-cargo", version = "0.1.0" }
+sreg-eco-generic = { path = "crates/eco-generic", version = "0.1.0" }
 
 # Command line and logging
 clap = { version = "4.6.7", features = ["derive", "env"] }
