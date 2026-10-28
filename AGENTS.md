@@ -11,9 +11,12 @@ Read these before changing anything:
 
 - `docs/spec.md` – the full product specification (copy of the one in the Worker
   repository; the CLI section is the relevant part).
-- `docs/api.md` – the HTTP contract of the Worker (`/api/v1`). The CLI must follow it
-  exactly; if something is missing from the contract, fix the contract in the Worker
-  repository first.
+- `docs/api.md` – the HTTP contract of the Worker (`/api/v1`, plus the generic, NuGet,
+  Swift and Maven feeds). The CLI must follow it exactly; if something is missing from the
+  contract, fix the contract in the Worker repository first. Both documents are identical
+  copies of the Worker's; keep them in sync.
+- `docs/releasing.md` – how releases are cut and how CLI and Worker versions relate;
+  `docs/cli-auth.md` – the design of `sreg auth`.
 
 ## Language
 
@@ -33,10 +36,12 @@ crates/
   eco-generic/   # arbitrary files as generic package versions
   eco-swift/     # packaging through `swift package archive-source` and `dump-package`
   eco-maven/     # Maven artifacts from a local file repository, effective POM parsing
-  cli/           # clap command tree, text and `--json` output, exit codes
+  cli/           # clap command tree, text and `--json` output, exit codes; one Cargo
+                 # feature per ecosystem (all enabled by default)
 action/          # composite GitHub Action wrapping the published binaries
 dist-workspace.toml  # cargo-dist release configuration
-docs/            # specification and API contract
+docs/            # specification, API contract, release process, `sreg auth` design
+.github/workflows/   # CI (fmt, clippy, tests, feature matrix, MSRV, action) and releases
 ```
 
 Design rules that must hold:
@@ -54,19 +59,26 @@ Design rules that must hold:
 ```
 cargo build --workspace
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
-Before every commit run fmt, clippy and the tests. A commit must leave the tree green.
+Before every commit run fmt, clippy and the tests. A commit must leave the tree green. CI
+also builds every ecosystem feature on its own and none at all
+(`cargo clippy -p sreg-cli --all-targets --locked --no-default-features --features <eco>`
+and the same `cargo test`), and checks the minimum supported Rust version
+(`cargo +1.85 check --workspace --all-targets --locked`); run these when a change touches
+feature gating or uses newer language features.
 
 ## Testing
 
 - Unit-test parsers and packagers with real fixtures under `crates/*/tests/fixtures`.
 - Test the HTTP client against a local mock server (`wiremock`); no network access in
   tests.
-- Commands that shell out (`npm pack`, `cargo package`, `git archive`) are tested behind
-  a trait so the shell-out can be faked.
+- Commands that shell out (`npm pack`, `cargo package`, `dotnet pack`, `swift package`,
+  `git`) are tested behind the `CommandRunner` trait so the shell-out can be faked; the CLI
+  integration tests in `crates/cli/tests` run the binary against a `wiremock` registry and
+  storage.
 
 ## Git conventions
 
@@ -90,6 +102,7 @@ Before every commit run fmt, clippy and the tests. A commit must leave the tree 
 
 ## Coding style
 
-- Rust 2021 edition, `#![deny(unsafe_code)]`, no `unwrap()` outside tests.
+- Rust 2021 edition, minimum Rust 1.85, `#![deny(unsafe_code)]` in every crate, no
+  `unwrap()` outside tests.
 - Errors use `thiserror` in library crates and `anyhow` only in the binary.
 - Keep crates small and dependency lists short; prefer `rustls` over native TLS.
