@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use sreg_core::git::Git;
 use sreg_core::{
-    CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions, Packager, SystemRunner,
-    Workdir,
+    ArchiveOptions, CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions,
+    Packager, SystemRunner, Workdir,
 };
 
 pub use nuspec::{read_from_nupkg, Dependency, DependencyGroup, Nuspec, ANY_RANGE};
@@ -131,6 +131,49 @@ impl<R: CommandRunner> NugetPackager<R> {
 impl<R: CommandRunner> Packager for NugetPackager<R> {
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Nuget
+    }
+
+    /// Describes a `.nupkg` built earlier from the `.nuspec` inside it.
+    ///
+    /// The file is uploaded unchanged, under the lower-case name `<id>.<version>.nupkg`
+    /// that the registry requires. `--version` must agree with the `.nuspec`. A symbols
+    /// package is not published in this mode.
+    fn package_archive(&self, opts: &ArchiveOptions) -> Result<Package, Error> {
+        if extension(&opts.path) != "nupkg" {
+            return Err(Error::InvalidInput(format!(
+                "`{}` is not a .nupkg; --archive takes the package itself (symbols packages \
+                 are not published in this mode)",
+                opts.path.display()
+            )));
+        }
+        let nuspec = nuspec::read_from_nupkg(&opts.path)?;
+        check_entries(&opts.path)?;
+        validate_id(&nuspec.id)?;
+        validate_version(&nuspec.version)
+            .map_err(|err| Error::InvalidInput(format!("the .nuspec of the package: {err}")))?;
+        if let Some(requested) = &opts.version {
+            validate_version(requested)?;
+            if normalize_version(requested) != normalize_version(&nuspec.version) {
+                return Err(Error::InvalidInput(format!(
+                    "the .nupkg has version {}, but --version {requested} was given",
+                    nuspec.version
+                )));
+            }
+        }
+        let name = format!(
+            "{}.{}.nupkg",
+            nuspec.id.to_ascii_lowercase(),
+            nuspec.version.to_ascii_lowercase()
+        );
+        Ok(Package {
+            eco: Ecosystem::Nuget,
+            name: nuspec.id.clone(),
+            version: nuspec.version.clone(),
+            files: vec![PackageFile::archive(&opts.path, name)?],
+            manifest: nuspec.manifest(),
+            workdir: None,
+            notes: Vec::new(),
+        })
     }
 
     /// Packs the project into a temporary directory owned by the package and reads the
@@ -278,6 +321,21 @@ fn produced_packages(output: &Path) -> Result<(PathBuf, Option<PathBuf>), Error>
         .into_iter()
         .find(|snupkg| stem(snupkg) == stem(&nupkg));
     Ok((nupkg, snupkg))
+}
+
+/// Reads every entry of the zip to the end, which checks their CRCs, so that a truncated
+/// or corrupt package is rejected before upload.
+fn check_entries(path: &Path) -> Result<(), Error> {
+    let invalid = |err: &dyn std::fmt::Display| {
+        Error::InvalidInput(format!("`{}` is not a valid .nupkg: {err}", path.display()))
+    };
+    let mut archive =
+        zip::ZipArchive::new(std::fs::File::open(path)?).map_err(|err| invalid(&err))?;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|err| invalid(&err))?;
+        std::io::copy(&mut entry, &mut std::io::sink()).map_err(|err| invalid(&err))?;
+    }
+    Ok(())
 }
 
 /// Moves `path` to `name` in the work directory.
