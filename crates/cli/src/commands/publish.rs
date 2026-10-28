@@ -55,7 +55,7 @@ pub async fn run_packager(
     let options = PublishOptions {
         dry_run: args.dry_run,
         tag,
-        append: false,
+        append: None,
     };
     publish_package(global, out, &package, options, &args.oidc).await
 }

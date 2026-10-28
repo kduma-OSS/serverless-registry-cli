@@ -72,7 +72,7 @@ pub async fn publish(
     let options = PublishOptions {
         dry_run: args.dry_run,
         tag: None,
-        append: args.append,
+        append: Some(!args.no_append),
     };
     publish_package(global, out, &package, options, &args.oidc).await
 }

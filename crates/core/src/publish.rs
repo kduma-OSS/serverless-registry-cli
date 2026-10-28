@@ -22,8 +22,9 @@ pub struct PublishOptions {
     pub dry_run: bool,
     /// npm dist-tag to point at the version.
     pub tag: Option<String>,
-    /// Add the files to an already published version (generic only).
-    pub append: bool,
+    /// Generic only: `Some(true)` adds the files to an already published version,
+    /// `Some(false)` requires a new version; `None` omits the field.
+    pub append: Option<bool>,
 }
 
 /// Result of a publish.
@@ -120,7 +121,7 @@ pub async fn publish(
 fn init_request(
     package: &Package,
     tag: Option<String>,
-    append: bool,
+    append: Option<bool>,
 ) -> Result<PublishInitRequest> {
     if package.files.is_empty() {
         return Err(Error::InvalidInput(

@@ -170,9 +170,10 @@ pub struct PublishInitRequest {
     /// npm dist-tag (npm only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
-    /// Add the files to an already published version (generic only).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub append: bool,
+    /// Generic only: `true` adds the files to an already published version, `false`
+    /// requires a new version. Omitted for the other ecosystems.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub append: Option<bool>,
 }
 
 /// Upload instructions for one file in the `init` response.
@@ -689,7 +690,7 @@ mod tests {
             }],
             manifest: json!({ "name": "@acme/sdk", "version": "2.3.1" }),
             tag: None,
-            append: false,
+            append: None,
         };
         let value = serde_json::to_value(&request).unwrap();
         assert_eq!(value["eco"], "npm");
@@ -716,7 +717,7 @@ mod tests {
             }],
             manifest: json!({}),
             tag: None,
-            append: true,
+            append: Some(true),
         };
         let value = serde_json::to_value(&request).unwrap();
         assert_eq!(value["files"][0]["labels"], json!({ "os": "linux" }));

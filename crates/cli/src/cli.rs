@@ -280,9 +280,10 @@ pub struct GenericPublishArgs {
     #[arg(long, value_name = "FILE")]
     pub spec: Option<PathBuf>,
 
-    /// Add the files to an already published version (within the registry's append window)
+    /// Require a new version instead of adding the files to an already published one
+    /// (by default files are appended within the registry's append window)
     #[arg(long)]
-    pub append: bool,
+    pub no_append: bool,
 
     /// Stop after the registry has accepted the upload declaration (`init`)
     #[arg(long)]
@@ -480,6 +481,7 @@ mod tests {
         assert_eq!(args.version, "1.0.0");
         assert_eq!(args.files, [PathBuf::from("a.zip"), PathBuf::from("b.zip")]);
         assert_eq!(args.labels, ["os=linux"]);
+        assert!(!args.no_append);
 
         assert!(Cli::try_parse_from(["sreg", "generic", "publish", "cli", "1.0.0"]).is_err());
         assert!(Cli::try_parse_from([

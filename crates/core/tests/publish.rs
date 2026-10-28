@@ -496,7 +496,7 @@ async fn uploads_every_file_of_a_generic_version() {
         &f.client,
         &package,
         PublishOptions {
-            append: true,
+            append: Some(true),
             ..PublishOptions::default()
         },
     )

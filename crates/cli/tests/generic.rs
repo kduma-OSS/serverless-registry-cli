@@ -79,7 +79,8 @@ async fn publishes_files_with_labels_and_meta() {
                 { "name": "cli-linux.tar.gz", "size": 5, "sha256": HELLO_SHA256, "labels": { "channel": "stable" } },
                 { "name": "cli-macos.tar.gz", "size": 5, "sha256": WORLD_SHA256, "labels": { "channel": "stable" } }
             ],
-            "manifest": { "commit": "abc123", "notes": "first" }
+            "manifest": { "commit": "abc123", "notes": "first" },
+            "append": true
         })))
         .respond_with(init_response(&server))
         .expect(1)
@@ -164,7 +165,7 @@ async fn dry_run_json_lists_files_without_presigned_urls() {
             "1.0.0",
             "--spec",
             spec.to_str().unwrap(),
-            "--append",
+            "--no-append",
             "--dry-run",
             "--json",
         ],
@@ -180,7 +181,7 @@ async fn dry_run_json_lists_files_without_presigned_urls() {
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
     let init: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
-    assert_eq!(init["append"], true);
+    assert_eq!(init["append"], false);
 }
 
 #[tokio::test(flavor = "multi_thread")]
