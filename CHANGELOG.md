@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `sreg login --publish` no longer stops at 20 versions on its own: the registry decides, with
+  its `MAX_PUBLISH_SCOPES` setting (20 by default), and its error names the limit.
 - Documentation: `docs/spec.md` and `docs/api.md` synced with the registry (the scope of an
   existing secret can be edited with `PATCH …/secrets/<id>`).
 
