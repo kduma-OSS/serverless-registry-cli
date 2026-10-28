@@ -79,6 +79,18 @@ pub enum Error {
         detail: String,
     },
 
+    /// The label filter of a single-file download selects more than one file
+    /// (`409 ambiguous`).
+    #[error("the labels select more than one file: {message}")]
+    Ambiguous {
+        /// Human-readable message from the registry.
+        message: String,
+        /// The version the files belong to, if the registry said.
+        version: Option<String>,
+        /// The files the labels select.
+        files: Vec<crate::models::GenericCandidate>,
+    },
+
     /// The version being published already exists in the registry (`409`).
     #[error("this version already exists in the registry")]
     VersionExists,

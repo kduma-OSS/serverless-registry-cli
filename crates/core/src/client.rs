@@ -20,9 +20,9 @@ use crate::models::{
     AddSecretRequest, AddSecretResponse, CreateCredentialRequest, CreateCredentialResponse,
     Credential, CredentialList, DeleteCredentialResponse, DeletePackageResponse,
     DeleteVersionResponse, ErrorBody, ExpireSecretRequest, ExpireSecretResponse,
-    GenericFeedVersion, Grant, PackageEntry, PackageList, PublishCommitRequest,
-    PublishCommitResponse, PublishInitRequest, PublishInitResponse, ReindexResponse,
-    UpdateGrantsRequest, VersionInfo, Whoami, YankResponse,
+    GenericAmbiguousBody, GenericFeedVersion, Grant, PackageEntry, PackageList,
+    PublishCommitRequest, PublishCommitResponse, PublishInitRequest, PublishInitResponse,
+    ReindexResponse, UpdateGrantsRequest, VersionInfo, Whoami, YankResponse,
 };
 use crate::packager::Ecosystem;
 use crate::retry::{is_retryable, RetryPolicy};
@@ -58,6 +58,8 @@ pub struct GenericQuery<'a> {
     /// `version=<constraint>`: `latest` is the highest version satisfying this semver
     /// range (npm syntax, e.g. `^1.2`, `>=1 <2`, `1.x`).
     pub constraint: Option<&'a str>,
+    /// `include=yanked`: an exact version is returned even when it is yanked.
+    pub include_yanked: bool,
 }
 
 impl GenericQuery<'_> {
@@ -73,6 +75,9 @@ impl GenericQuery<'_> {
             }
             if self.prerelease {
                 query.append_pair("channel", "prerelease");
+            }
+            if self.include_yanked {
+                query.append_pair("include", "yanked");
             }
         }
         if url.query() == Some("") {
@@ -211,6 +216,22 @@ impl Client {
         let mut url = self.url(&["generic", name, version])?;
         query.apply(&mut url);
         self.send_to(Method::GET, url, None, self.retry, None).await
+    }
+
+    /// The URL of `GET <registry>/generic/<name>/<version>/-/download` (`<version>` may be
+    /// `latest`), which redirects to the single file selected by `query`'s labels.
+    ///
+    /// Fetch it with [`Downloader::resolve_sole`](crate::download::Downloader::resolve_sole),
+    /// which reads the redirect instead of following it.
+    pub fn generic_sole_url(
+        &self,
+        name: &str,
+        version: &str,
+        query: &GenericQuery<'_>,
+    ) -> Result<Url> {
+        let mut url = self.url(&["generic", name, version, "-", "download"])?;
+        query.apply(&mut url);
+        Ok(url)
     }
 
     /// `GET` an endpoint, retrying on transport errors, `5xx` and `429`.
@@ -551,6 +572,17 @@ pub fn error_from_response(
     }
     if status == StatusCode::CONFLICT && code == "file_exists" {
         return Error::FileExists { message };
+    }
+    if status == StatusCode::CONFLICT && code == "ambiguous" {
+        let body = serde_json::from_slice::<GenericAmbiguousBody>(body).ok();
+        let (version, files) = body
+            .map(|body| (body.version, body.files))
+            .unwrap_or_default();
+        return Error::Ambiguous {
+            message,
+            version,
+            files,
+        };
     }
 
     Error::Api {

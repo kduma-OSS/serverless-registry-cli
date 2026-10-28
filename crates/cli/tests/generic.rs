@@ -612,3 +612,302 @@ async fn get_json_prints_the_resolved_feed_document() {
     assert_eq!(body["files"][0]["name"], "cli-linux.tar.gz");
     assert!(storage.received_requests().await.unwrap().is_empty());
 }
+
+/// A registry whose single-file endpoint resolves `^1` and `os=linux` to
+/// `1.4.0`/`cli-linux.tar.gz` on `storage`, with the feed entry of that version.
+async fn sole_server(storage_body: &'static [u8]) -> (MockServer, MockServer) {
+    let registry = MockServer::start().await;
+    let storage = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/latest/-/download"))
+        .and(query_param("version", "^1"))
+        .and(query_param("label", "os:linux"))
+        .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header(
+                    "location",
+                    format!(
+                        "{}/bucket/cli-linux.tar.gz?X-Amz-Signature=s",
+                        storage.uri()
+                    )
+                    .as_str(),
+                )
+                .insert_header("x-resolved-version", "1.4.0")
+                .insert_header("x-resolved-file", "cli-linux.tar.gz"),
+        )
+        .expect(1)
+        .mount(&registry)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/1.4.0"))
+        .and(query_param("label", "os:linux"))
+        .and(query_param("include", "yanked"))
+        .respond_with(json(
+            200,
+            json!({
+                "name": "tools/cli", "version": "1.4.0", "published": "2026-10-28T10:12:00Z",
+                "yanked": false, "meta": {},
+                "files": [{
+                    "name": "cli-linux.tar.gz", "size": 5, "sha256": HELLO_SHA256,
+                    "labels": { "os": "linux" },
+                    "url": format!("{}/generic/tools%2Fcli/1.4.0/cli-linux.tar.gz", registry.uri())
+                }]
+            }),
+        ))
+        .mount(&registry)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/1.4.0/cli-linux.tar.gz"))
+        .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+        .respond_with(
+            ResponseTemplate::new(302).insert_header(
+                "location",
+                format!(
+                    "{}/bucket/cli-linux.tar.gz?X-Amz-Signature=s",
+                    storage.uri()
+                )
+                .as_str(),
+            ),
+        )
+        .mount(&registry)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/bucket/cli-linux.tar.gz"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(storage_body))
+        .mount(&storage)
+        .await;
+    (registry, storage)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sole_downloads_the_single_file_to_a_file_path() {
+    let (registry, storage) = sole_server(b"hello").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bin").join("cli.tgz");
+
+    sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "^1",
+            "--label",
+            "os=linux",
+            "--sole",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    )
+    .await
+    .success()
+    .stdout(format!("{}\n", out.display()))
+    .stderr(predicate::str::contains(
+        "Resolved tools/cli ^1 to 1.4.0 cli-linux.tar.gz",
+    ))
+    .stderr(predicate::str::contains("X-Amz-Signature").not());
+
+    assert_eq!(std::fs::read(&out).unwrap(), b"hello");
+    let storage_requests = storage.received_requests().await.unwrap();
+    assert_eq!(storage_requests.len(), 1);
+    assert!(storage_requests[0].headers.get("authorization").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sole_renews_an_expired_storage_url() {
+    let (registry, storage) = sole_server(b"hello").await;
+    Mock::given(method("GET"))
+        .and(path("/bucket/cli-linux.tar.gz"))
+        .respond_with(ResponseTemplate::new(403))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&storage)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("cli.tgz");
+
+    sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "^1",
+            "--label",
+            "os=linux",
+            "--sole",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    )
+    .await
+    .success();
+
+    assert_eq!(std::fs::read(&out).unwrap(), b"hello");
+    assert_eq!(storage.received_requests().await.unwrap().len(), 2);
+    let file_requests = registry
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path().ends_with("/1.4.0/cli-linux.tar.gz"))
+        .count();
+    assert_eq!(file_requests, 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sole_names_the_file_after_the_registry_in_a_directory() {
+    let (registry, _storage) = sole_server(b"hello").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = format!("{}/downloads/", dir.path().display());
+
+    sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "^1",
+            "--label",
+            "os=linux",
+            "--sole",
+            "--out",
+            &out,
+        ],
+    )
+    .await
+    .success();
+
+    assert_eq!(
+        std::fs::read(dir.path().join("downloads").join("cli-linux.tar.gz")).unwrap(),
+        b"hello"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sole_verifies_the_file_against_the_feed() {
+    let (registry, _storage) = sole_server(b"HELLO").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("cli.tgz");
+
+    sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "^1",
+            "--label",
+            "os=linux",
+            "--sole",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    )
+    .await
+    .code(1)
+    .stderr(predicate::str::contains("corrupt"));
+
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sole_json_prints_the_feed_entry_of_the_file_without_downloading() {
+    let (registry, storage) = sole_server(b"hello").await;
+
+    let assert = sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "^1",
+            "--label",
+            "os=linux",
+            "--sole",
+            "--json",
+        ],
+    )
+    .await
+    .success();
+
+    let body = stdout_json(&assert);
+    assert_eq!(body["version"], "1.4.0");
+    assert_eq!(body["files"].as_array().unwrap().len(), 1);
+    assert_eq!(body["files"][0]["sha256"], HELLO_SHA256);
+    assert!(storage.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sole_lists_the_candidates_when_the_labels_are_ambiguous() {
+    let registry = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/latest/-/download"))
+        .and(query_param("label", "os:linux"))
+        .respond_with(error(409, "ambiguous", "2 files match the labels").set_body_json(json!({
+            "error": "ambiguous",
+            "message": "2 files match the labels",
+            "version": "1.4.0",
+            "files": [
+                { "name": "cli-linux-x64.tar.gz", "labels": { "os": "linux", "arch": "x64" } },
+                { "name": "cli-linux-arm64.tar.gz", "labels": { "os": "linux", "arch": "arm64" } }
+            ]
+        })))
+        .expect(1)
+        .mount(&registry)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+
+    sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "--label",
+            "os=linux",
+            "--sole",
+            "--out",
+            dir.path().to_str().unwrap(),
+        ],
+    )
+    .await
+    .code(1)
+    .stdout(predicate::str::is_empty())
+    .stderr(predicate::str::contains("2 files match the labels"))
+    .stderr(predicate::str::contains("files of 1.4.0"))
+    .stderr(predicate::str::contains(
+        "cli-linux-x64.tar.gz (arch=x64, os=linux)",
+    ))
+    .stderr(predicate::str::contains(
+        "cli-linux-arm64.tar.gz (arch=arm64, os=linux)",
+    ));
+
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sole_fails_when_no_file_matches() {
+    let registry = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/latest/-/download"))
+        .respond_with(error(404, "not_found", "no file matches the labels"))
+        .mount(&registry)
+        .await;
+
+    sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "--label",
+            "os=plan9",
+            "--sole",
+        ],
+    )
+    .await
+    .code(1)
+    .stderr(predicate::str::contains("no file matches the labels"));
+}

@@ -337,3 +337,149 @@ async fn a_second_storage_refusal_is_fatal() {
     assert_eq!(registry.received_requests().await.unwrap().len(), 2);
     assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
 }
+
+#[tokio::test]
+async fn sole_file_is_resolved_from_the_redirect() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/latest/-/download"))
+        .and(query_param("label", "os:linux"))
+        .and(query_param("version", "^1"))
+        .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header(
+                    "location",
+                    "https://storage.example/b/cli.tgz?X-Amz-Signature=s",
+                )
+                .insert_header("x-resolved-version", "1.4.0")
+                .insert_header("x-resolved-file", "cli-linux.tar.gz"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = client(&server);
+    let labels = vec![("os".to_owned(), "linux".to_owned())];
+    let url = client
+        .generic_sole_url(
+            "tools/cli",
+            "latest",
+            &GenericQuery {
+                labels: &labels,
+                constraint: Some("^1"),
+                ..GenericQuery::default()
+            },
+        )
+        .unwrap();
+
+    let sole = Downloader::new(&client)
+        .unwrap()
+        .resolve_sole(url)
+        .await
+        .unwrap();
+
+    assert_eq!(sole.version, "1.4.0");
+    assert_eq!(sole.name, "cli-linux.tar.gz");
+    assert_eq!(sole.location.host_str(), Some("storage.example"));
+    assert!(!format!("{sole:?}").contains("Signature"));
+}
+
+#[tokio::test]
+async fn sole_file_rejects_unsafe_names_and_missing_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/generic/cli/1.0.0/-/download"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", "https://storage.example/x")
+                .insert_header("x-resolved-version", "1.0.0")
+                .insert_header("x-resolved-file", "../evil"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/generic/cli/2.0.0/-/download"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "https://s.example/x"))
+        .mount(&server)
+        .await;
+    let client = client(&server);
+    let downloader = Downloader::new(&client).unwrap();
+
+    for version in ["1.0.0", "2.0.0"] {
+        let url = client
+            .generic_sole_url("cli", version, &GenericQuery::default())
+            .unwrap();
+        let err = downloader.resolve_sole(url).await.unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)), "{version}: {err:?}");
+    }
+}
+
+#[tokio::test]
+async fn ambiguous_labels_list_the_candidates() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/generic/cli/latest/-/download"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({
+            "error": "ambiguous",
+            "message": "2 files match the labels",
+            "version": "1.4.0",
+            "files": [
+                { "name": "cli-linux-x64.tar.gz", "labels": { "os": "linux", "arch": "x64" } },
+                "cli-linux-arm64.tar.gz"
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/generic/cli/9.9.9/-/download"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_json(json!({ "error": "not_found", "message": "no file matches" })),
+        )
+        .mount(&server)
+        .await;
+    let client = client(&server);
+    let downloader = Downloader::new(&client).unwrap();
+
+    let url = client
+        .generic_sole_url("cli", "latest", &GenericQuery::default())
+        .unwrap();
+    let err = downloader.resolve_sole(url).await.unwrap_err();
+    let Error::Ambiguous {
+        message,
+        version,
+        files,
+    } = err
+    else {
+        panic!("expected Ambiguous, got {err:?}");
+    };
+    assert_eq!(message, "2 files match the labels");
+    assert_eq!(version.as_deref(), Some("1.4.0"));
+    assert_eq!(files[0].name, "cli-linux-x64.tar.gz");
+    assert_eq!(files[0].labels["arch"], "x64");
+    assert_eq!(files[1].name, "cli-linux-arm64.tar.gz");
+    assert!(files[1].labels.is_empty());
+
+    let url = client
+        .generic_sole_url("cli", "9.9.9", &GenericQuery::default())
+        .unwrap();
+    let err = downloader.resolve_sole(url).await.unwrap_err();
+    assert!(matches!(err, Error::Api { status: 404, .. }), "{err:?}");
+}
+
+#[tokio::test]
+async fn download_to_writes_the_given_path() {
+    let (registry, _storage) = redirecting_servers(CONTENT).await;
+    let dir = tempfile::tempdir().unwrap();
+    let destination = dir.path().join("cli.tgz");
+
+    Downloader::new(&client(&registry))
+        .unwrap()
+        .download_to(&feed_file(&registry, CONTENT_SHA256), &destination)
+        .await
+        .unwrap();
+
+    assert_eq!(std::fs::read(&destination).unwrap(), CONTENT);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}

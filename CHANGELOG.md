@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`GET /generic/<name>/latest?version=<constraint>`, with `--prerelease` and the label
   filters); the resolved version is printed on stderr and `--json` prints the feed
   document.
+- `sreg generic get --sole`: fail unless the label filter selects exactly one file. The
+  registry's `GET /generic/<name>/<version|latest>/-/download` redirects to that file and
+  names it in `X-Resolved-Version` and `X-Resolved-File`; the file is still verified
+  against the size and SHA-256 of its feed entry. `409 ambiguous` lists the candidate
+  files and exits with `1`; `--out` may name a file path instead of a directory.
 
 ## [0.1.0] - 2026-10-28
 

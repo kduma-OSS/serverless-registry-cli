@@ -3,6 +3,7 @@
 //! Pipelines rely on these values to tell a failed publication apart from one that
 //! was skipped because the version already exists.
 
+use sreg_core::models::GenericCandidate;
 use sreg_core::Error;
 
 /// The command completed successfully.
@@ -38,8 +39,32 @@ pub fn hint_for(err: &anyhow::Error) -> Option<String> {
         Some(Error::FileExists { .. }) => {
             Some("published files are immutable; use another file name or a new version".into())
         }
+        Some(Error::Ambiguous { version, files, .. }) => {
+            Some(ambiguous_hint(version.as_deref(), files))
+        }
         _ => None,
     }
+}
+
+/// Lists the files a `--sole` label filter selects, so that the user can narrow it.
+fn ambiguous_hint(version: Option<&str>, files: &[GenericCandidate]) -> String {
+    let mut hint = match version {
+        Some(version) => format!("add --label filters to select one of these files of {version}:"),
+        None => "add --label filters to select one of these files:".to_owned(),
+    };
+    for file in files {
+        hint.push_str("\n  ");
+        hint.push_str(&file.name);
+        if !file.labels.is_empty() {
+            let labels: Vec<String> = file
+                .labels
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect();
+            hint.push_str(&format!(" ({})", labels.join(", ")));
+        }
+    }
+    hint
 }
 
 /// Maps an error to the exit code the process should terminate with.
@@ -69,6 +94,29 @@ mod tests {
             message: "x".into(),
         });
         assert_eq!(code_for(&err), VERSION_EXISTS);
+    }
+
+    #[test]
+    fn ambiguous_labels_fail_with_one_and_list_the_candidates() {
+        let err = anyhow::Error::new(Error::Ambiguous {
+            message: "2 files match".into(),
+            version: None,
+            files: vec![
+                GenericCandidate {
+                    name: "a.tgz".into(),
+                    labels: [("os".to_owned(), "linux".to_owned())].into(),
+                },
+                GenericCandidate {
+                    name: "b.tgz".into(),
+                    labels: Default::default(),
+                },
+            ],
+        });
+        assert_eq!(code_for(&err), FAILURE);
+        assert_eq!(
+            hint_for(&err).unwrap(),
+            "add --label filters to select one of these files:\n  a.tgz (os=linux)\n  b.tgz"
+        );
     }
 
     #[test]

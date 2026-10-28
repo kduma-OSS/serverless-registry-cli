@@ -7,8 +7,8 @@ environment, a `dotnet nuget add source` command (NuGet), a `swift package-regis
 command (Swift), or `settings.xml` and Gradle snippets (Maven).
 
 Generic packages have no package manager:
-`sreg generic get <name> [<version>|<constraint>|latest]` uses `--token` /
-`REGISTRY_TOKEN` (or `--oidc [--oidc-project <PROJECT>]`) directly. The publish commands take
+`sreg generic get <name> [<version>|<constraint>|latest] [--label k=v]... [--sole]` uses
+`--token` / `REGISTRY_TOKEN` (or `--oidc [--oidc-project <PROJECT>]`) directly. The publish commands take
 the same `--oidc [--oidc-project <PROJECT>]` pair; only `sreg auth` calls it `--project`.
 
 ```text

@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{bail, Context};
 use sreg_core::download::Downloader;
 use sreg_core::publish::PublishOptions;
-use sreg_core::{GenericQuery, PackageOptions, Packager};
+use sreg_core::{Client, GenericQuery, PackageOptions, Packager};
 use sreg_eco_generic::{
     parse_key_value, parse_spec, validate_label, validate_name, validate_version, GenericFileSpec,
     GenericPackager,
@@ -148,9 +148,13 @@ pub async fn get(global: &GlobalArgs, out: &Output, args: &GenericGetArgs) -> an
         labels: &labels,
         prerelease: args.prerelease,
         constraint: requested.constraint(),
+        include_yanked: false,
     };
 
     let client = context::client_with(global, args.oidc.oidc, args.oidc.project.as_deref()).await?;
+    if args.sole {
+        return get_sole(&client, out, args, requested, &query).await;
+    }
     let version = client
         .generic_version(&args.name, requested.segment(), &query)
         .await?;
@@ -187,6 +191,91 @@ pub async fn get(global: &GlobalArgs, out: &Output, args: &GenericGetArgs) -> an
         println!("{}", path.display());
     }
     Ok(())
+}
+
+/// `sreg generic get --sole`: the registry picks the single file the labels select.
+///
+/// The redirect of `/-/download` names the version and the file; their size and digest
+/// come from the feed entry of that version, so the download is verified like any other.
+async fn get_sole(
+    client: &Client,
+    out: &Output,
+    args: &GenericGetArgs,
+    requested: Requested<'_>,
+    query: &GenericQuery<'_>,
+) -> anyhow::Result<()> {
+    let url = client.generic_sole_url(&args.name, requested.segment(), query)?;
+    let downloader = Downloader::new(client)?;
+    let sole = downloader.resolve_sole(url).await?;
+
+    let mut version = client
+        .generic_version(
+            &args.name,
+            &sole.version,
+            &GenericQuery {
+                labels: query.labels,
+                include_yanked: true,
+                ..GenericQuery::default()
+            },
+        )
+        .await?;
+    let file = version
+        .files
+        .iter()
+        .find(|file| file.name == sole.name)
+        .cloned()
+        .with_context(|| {
+            format!(
+                "the registry resolved {} {} but does not list it",
+                sole.version, sole.name
+            )
+        })?;
+
+    if out.is_json() {
+        version.files = vec![file];
+        return out.json(&version);
+    }
+    // On stderr: stdout lists only the downloaded file.
+    eprintln!(
+        "Resolved {} {} to {} {}",
+        version.name, args.version, version.version, file.name
+    );
+    if version.yanked {
+        eprintln!("warning: {} {} is yanked", version.name, version.version);
+    }
+
+    let destination = if is_directory(&args.out) {
+        std::fs::create_dir_all(&args.out)
+            .with_context(|| format!("failed to create {}", args.out.display()))?;
+        args.out.join(&file.name)
+    } else {
+        if let Some(parent) = args
+            .out
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        args.out.clone()
+    };
+    // Download through the file's registry URL rather than `sole.location`: an expired
+    // presigned URL then gets renewed like any other download (docs/api.md 7.4).
+    downloader
+        .download_to(&file, &destination)
+        .await
+        .with_context(|| format!("failed to download {}", file.name))?;
+    println!("{}", destination.display());
+    Ok(())
+}
+
+/// Whether `--out` names a directory: an existing one, or a path ending in a separator.
+fn is_directory(path: &Path) -> bool {
+    path.is_dir()
+        || path
+            .as_os_str()
+            .to_string_lossy()
+            .ends_with(['/', std::path::MAIN_SEPARATOR])
 }
 
 /// Parses `--label key=value` arguments; a key may appear only once.

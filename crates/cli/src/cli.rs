@@ -456,13 +456,18 @@ pub struct GenericGetArgs {
     #[arg(long = "label", value_name = "KEY=VALUE")]
     pub labels: Vec<String>,
 
-    /// Directory to write the files to
-    #[arg(long, value_name = "DIR", default_value = ".")]
+    /// Directory to write the files to; with --sole also the path of the file (an
+    /// existing directory or a path ending in / stays a directory)
+    #[arg(long, value_name = "PATH", default_value = ".")]
     pub out: PathBuf,
 
     /// With `latest` or a constraint: consider prerelease versions too
     #[arg(long)]
     pub prerelease: bool,
+
+    /// Fail unless the label filter selects exactly one file, and download that file
+    #[arg(long)]
+    pub sole: bool,
 
     #[command(flatten)]
     pub oidc: OidcArgs,

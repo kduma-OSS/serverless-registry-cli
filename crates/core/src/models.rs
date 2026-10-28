@@ -423,6 +423,52 @@ pub struct GenericFeedVersion {
     pub files: Vec<GenericFeedFile>,
 }
 
+/// A file the label filter of `GET /generic/<name>/<version>/-/download` left among
+/// several (`409 ambiguous`). The registry may list bare names or file entries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "GenericCandidateRepr")]
+pub struct GenericCandidate {
+    /// File name.
+    pub name: String,
+    /// Labels of the file, when the registry sent them.
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum GenericCandidateRepr {
+    Name(String),
+    Entry {
+        name: String,
+        #[serde(default)]
+        labels: BTreeMap<String, String>,
+    },
+}
+
+impl From<GenericCandidateRepr> for GenericCandidate {
+    fn from(repr: GenericCandidateRepr) -> Self {
+        match repr {
+            GenericCandidateRepr::Name(name) => GenericCandidate {
+                name,
+                labels: BTreeMap::new(),
+            },
+            GenericCandidateRepr::Entry { name, labels } => GenericCandidate { name, labels },
+        }
+    }
+}
+
+/// Body of a `409 ambiguous` answer of the generic download endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GenericAmbiguousBody {
+    /// The version the registry resolved, if it says.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// The files the labels select.
+    #[serde(default)]
+    pub files: Vec<GenericCandidate>,
+}
+
 /// Type of an auth entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
