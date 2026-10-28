@@ -141,7 +141,7 @@ pub struct OidcArgs {
     pub oidc: bool,
 
     /// Project the OIDC token is issued for (requires --oidc)
-    #[arg(long, value_name = "PROJECT", requires = "oidc")]
+    #[arg(long = "oidc-project", value_name = "PROJECT", requires = "oidc")]
     pub project: Option<String>,
 }
 
@@ -412,11 +412,20 @@ mod tests {
                 "pkg",
                 "--dry-run",
                 "--oidc",
-                "--project",
+                "--oidc-project",
                 "ci-acme",
             ])
             .unwrap();
             assert_eq!(cli.command.name(), format!("{eco} publish"));
+            assert!(Cli::try_parse_from([
+                "sreg",
+                eco,
+                "publish",
+                "--oidc",
+                "--project",
+                "ci-acme"
+            ])
+            .is_err());
         }
         assert!(Cli::try_parse_from(["sreg", "cargo", "publish", "--tag", "next"]).is_err());
     }

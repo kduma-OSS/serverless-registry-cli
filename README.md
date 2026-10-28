@@ -37,8 +37,8 @@ repository.
 Every publish command computes the SHA-256 digest and size of each file, calls `init`,
 uploads every file with `PUT` (3 attempts with backoff; a new `init` when the presigned
 URLs expire) and calls `commit`. All of them accept `--dry-run` (stop after `init`),
-`--oidc` and `--project <p>` (authenticate with a GitHub Actions OIDC token for the
-project instead of `REGISTRY_TOKEN`).
+`--oidc` and `--oidc-project <p>` (authenticate with a GitHub Actions OIDC token for the
+project instead of `REGISTRY_TOKEN`; `sreg generic get` accepts them too).
 
 Global options: `--registry <url>`, `--token <token>`, `--json` (machine-readable
 output only on stdout) and `-v`/`--verbose` (logs of `sreg` itself to stderr; tokens
@@ -99,7 +99,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # sreg must be on PATH, e.g. installed from the GitHub releases
-      - run: sreg composer publish --oidc --project acme-sdk
+      - run: sreg composer publish --oidc --oidc-project acme-sdk
         env:
           REGISTRY_URL: https://packages.example.com
 ```

@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generic packages: `GenericPackager`, the generic feed and verified file downloads that
   never send the token to the storage.
 - `sreg composer|npm|cargo|nuget publish` wired to the publish flow with `--version`,
-  `--path`, `--dry-run`, `--oidc` and `--project` (`--tag` for npm); packaging for npm,
+  `--path`, `--dry-run`, `--oidc` and `--oidc-project` (`--tag` for npm); packaging for npm,
   cargo and nuget is not implemented yet.
 - Composer packaging (`sreg composer publish`): the name from `composer.json`, the
   version from `--version` or the tag of `HEAD` (`v1.2.3` → `1.2.3`; releases and

@@ -282,7 +282,7 @@ async fn oidc_publishes_with_a_github_token() {
             "--path",
             repo.path().to_str().unwrap(),
             "--oidc",
-            "--project",
+            "--oidc-project",
             "ci-acme",
             "--dry-run",
         ],

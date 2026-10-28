@@ -6,7 +6,8 @@ one line that puts it into the environment (for NuGet: a `dotnet nuget add sourc
 command).
 
 Generic packages have no package manager: `sreg generic get` uses `--token` /
-`REGISTRY_TOKEN` (or `--oidc --project`) directly.
+`REGISTRY_TOKEN` (or `--oidc --oidc-project <PROJECT>`) directly. The publish commands take
+the same `--oidc --oidc-project <PROJECT>` pair; only `sreg auth` calls it `--project`.
 
 ```text
 sreg auth <composer|npm|cargo|nuget> [--oidc --project <PROJECT>] [--write <FILE>]
