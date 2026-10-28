@@ -78,30 +78,52 @@ pub fn parse_pack_output(stdout: &[u8]) -> Result<Packed, Error> {
 }
 
 /// Reads `package/package.json` from a gzipped npm tarball as a JSON object.
+///
+/// The whole tarball is read, so that a truncated or corrupt one is an error here and
+/// not at install time.
 pub fn read_package_json(path: &Path) -> Result<Value, Error> {
     let mut archive = tar::Archive::new(GzDecoder::new(File::open(path)?));
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        if entry.path()?.to_str() != Some(PACKAGE_JSON) {
+    let mut manifest = None;
+    for entry in archive.entries().map_err(|err| not_a_tarball(path, err))? {
+        let mut entry = entry.map_err(|err| not_a_tarball(path, err))?;
+        let is_manifest = entry.path()?.to_str() == Some(PACKAGE_JSON);
+        if !is_manifest || manifest.is_some() {
+            // Skipping to the next header decompresses the data, which checks the CRC.
             continue;
         }
         let mut text = String::new();
-        entry.read_to_string(&mut text)?;
-        let manifest: Value = serde_json::from_str(&text).map_err(|err| {
+        entry
+            .read_to_string(&mut text)
+            .map_err(|err| not_a_tarball(path, err))?;
+        let parsed: Value = serde_json::from_str(&text).map_err(|err| {
             Error::InvalidInput(format!(
                 "{PACKAGE_JSON} in the tarball is not valid JSON: {err}"
             ))
         })?;
-        if !manifest.is_object() {
+        if !parsed.is_object() {
             return Err(Error::InvalidInput(format!(
                 "{PACKAGE_JSON} in the tarball must contain a JSON object"
             )));
         }
-        return Ok(manifest);
+        manifest = Some(parsed);
     }
-    Err(Error::InvalidInput(format!(
-        "the tarball produced by `npm pack` has no {PACKAGE_JSON}"
-    )))
+    // The tar reader stops at its end marker; reading the gzip stream to its end checks
+    // the trailer, so that a truncated file is rejected.
+    std::io::copy(&mut archive.into_inner(), &mut std::io::sink())
+        .map_err(|err| not_a_tarball(path, err))?;
+    manifest.ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "the tarball `{}` has no {PACKAGE_JSON}",
+            path.display()
+        ))
+    })
+}
+
+fn not_a_tarball(path: &Path, err: std::io::Error) -> Error {
+    Error::InvalidInput(format!(
+        "`{}` is not a valid npm tarball (.tgz): {err}",
+        path.display()
+    ))
 }
 
 #[cfg(test)]
