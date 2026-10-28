@@ -26,7 +26,8 @@ pub struct GenericFileSpec {
 /// Builds a generic [`Package`] from an explicit list of files.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericPackager {
-    /// Package name: `[a-z0-9][a-z0-9._-]*`, optionally prefixed by one `group/`.
+    /// Package name: `[a-z0-9][a-z0-9._-]*` without `__`, optionally prefixed by one
+    /// `group/`.
     pub name: String,
     /// Files of the version.
     pub files: Vec<GenericFileSpec>,
@@ -129,7 +130,8 @@ pub fn validate_label(key: &str, value: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Checks a package name: `[a-z0-9][a-z0-9._-]*`, optionally with one `group/` segment.
+/// Checks a package name: `[a-z0-9][a-z0-9._-]*`, optionally with one `group/` segment,
+/// and never containing `__`.
 pub fn validate_name(name: &str) -> Result<(), Error> {
     let segment_valid = |segment: &str| {
         let mut chars = segment.chars();
@@ -141,12 +143,15 @@ pub fn validate_name(name: &str) -> Result<(), Error> {
             })
     };
     let segments: Vec<&str> = name.split('/').collect();
-    if segments.len() <= 2 && segments.iter().all(|segment| segment_valid(segment)) {
+    let valid = segments.len() <= 2
+        && segments.iter().all(|segment| segment_valid(segment))
+        && !name.contains("__");
+    if valid {
         Ok(())
     } else {
         Err(Error::InvalidInput(format!(
             "invalid package name `{name}`; expected [<group>/]<name> with lower-case \
-             letters, digits, `.`, `_` and `-`"
+             letters, digits, `.`, `_` and `-` (but not `__`)"
         )))
     }
 }
@@ -277,7 +282,7 @@ mod tests {
 
     #[test]
     fn validates_names() {
-        for valid in ["cli", "tools/cli", "a1.b_c-d", "0tools/x"] {
+        for valid in ["cli", "tools/cli", "a1.b_c-d", "0tools/x", "a_b_c"] {
             assert!(validate_name(valid).is_ok(), "{valid}");
         }
         for invalid in [
