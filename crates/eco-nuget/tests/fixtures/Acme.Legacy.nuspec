@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>Acme.Legacy</id>
+    <version>0.9.1-Beta.2</version>
+    <authors>Acme</authors>
+    <description>A package with dependencies outside any group</description>
+    <dependencies>
+      <dependency id="Acme.Core" version="[1.0.0, 2.0.0)" />
+      <dependency id="Acme.Logging" />
+    </dependencies>
+  </metadata>
+</package>

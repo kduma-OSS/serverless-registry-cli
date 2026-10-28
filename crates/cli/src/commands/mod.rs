@@ -97,7 +97,9 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Nuget {
             command: NugetCommand::Publish(args),
         } => {
-            let packager = sreg_eco_nuget::NugetPackager;
+            let packager = sreg_eco_nuget::NugetPackager::new()
+                .project(args.project.clone())
+                .symbols(!args.no_symbols);
             publish::run_packager(
                 global,
                 &out,

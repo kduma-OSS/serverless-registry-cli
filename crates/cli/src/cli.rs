@@ -262,6 +262,15 @@ pub struct NugetPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
 
+    /// Project file to pack: `dotnet pack <PROJECT>` (default: the single .csproj in
+    /// the current directory; solutions are refused)
+    #[arg(long = "project", id = "nuget_project", value_name = "PROJECT")]
+    pub project: Option<PathBuf>,
+
+    /// Do not publish the .snupkg symbols package that `dotnet pack` produced
+    #[arg(long)]
+    pub no_symbols: bool,
+
     /// Extra arguments passed verbatim to `dotnet pack`
     #[arg(last = true, value_name = "DOTNET_ARGS")]
     pub dotnet_args: Vec<std::ffi::OsString>,
@@ -455,15 +464,10 @@ mod tests {
             ])
             .unwrap();
             assert_eq!(cli.command.name(), format!("{eco} publish"));
-            assert!(Cli::try_parse_from([
-                "sreg",
-                eco,
-                "publish",
-                "--oidc",
-                "--project",
-                "ci-acme"
-            ])
-            .is_err());
+            // The OIDC project is --oidc-project; --project names the .csproj of nuget.
+            let project =
+                Cli::try_parse_from(["sreg", eco, "publish", "--oidc", "--project", "ci-acme"]);
+            assert_eq!(project.is_ok(), eco == "nuget", "{eco}");
         }
         assert!(Cli::try_parse_from(["sreg", "cargo", "publish", "--tag", "next"]).is_err());
         // Only composer packs a directory itself; the others work in the current
@@ -574,6 +578,34 @@ mod tests {
             panic!("expected nuget publish");
         };
         assert_eq!(args.dotnet_args, ["-c", "Release"]);
+        assert_eq!(args.project, None);
+        assert!(!args.no_symbols);
+
+        let cli = Cli::try_parse_from([
+            "sreg",
+            "nuget",
+            "publish",
+            "--project",
+            "src/Acme.Sdk/Acme.Sdk.csproj",
+            "--no-symbols",
+            "--oidc",
+            "--oidc-project",
+            "ci-acme",
+        ])
+        .unwrap();
+        let Command::Nuget {
+            command: NugetCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected nuget publish");
+        };
+        assert_eq!(
+            args.project,
+            Some(PathBuf::from("src/Acme.Sdk/Acme.Sdk.csproj"))
+        );
+        assert!(args.no_symbols);
+        assert_eq!(args.publish.oidc.project.as_deref(), Some("ci-acme"));
+        assert!(Cli::try_parse_from(["sreg", "nuget", "publish", "--tag", "next"]).is_err());
     }
 
     #[cfg(feature = "generic")]

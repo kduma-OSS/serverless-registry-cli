@@ -9,4 +9,12 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+quick-xml.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
 sreg-core.workspace = true
+tracing.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+zip.workspace = true
