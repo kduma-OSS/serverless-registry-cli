@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Updated `time` (0.3.55, RUSTSEC-2026-0009) and `zip` (9.1.3, RUSTSEC-2026-0367, -0368 and
+- Updated `sha2` (0.11.1, which brings `block-buffer` 0.12.1, GHSA-qwgh-2vcv-g2f7), `time` (0.3.55, RUSTSEC-2026-0009) and `zip` (9.1.3, RUSTSEC-2026-0367, -0368 and
   -0369). The CLI only reads and writes archives and never extracts them.
 
 ### Changed
