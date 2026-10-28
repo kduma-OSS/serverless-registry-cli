@@ -73,8 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository; `--coords` selects the artifact, `--version` or the release tag the version
   directory (otherwise the only one); effective POMs only (`<parent>` and `${…}`
   properties rejected), no `-SNAPSHOT` versions; the files of the version directory
-  without checksums, signatures and `maven-metadata*.xml`, with the roles `pom`,
-  `archive`, `sources`, `javadoc`, `module` and `extra`; the coordinates, packaging,
+  without checksums and `maven-metadata*.xml`, with the roles `pom`, `archive`,
+  `sources`, `javadoc`, `module` and `extra` (`.asc` signatures included); the coordinates, packaging,
   dependencies and the POM itself as the manifest.
 - Release tag selection shared by all packagers (`sreg_core::git`): exactly one tag
   `v<semver>` on `HEAD`, or `<prefix><semver>` with `--tag-prefix <prefix>`.

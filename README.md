@@ -358,12 +358,12 @@ publishing {
   it with `mvn help:effective-pom`. The POM's `groupId`, `artifactId` and `version` must
   match its location.
 - **Files**: every file of the version directory except checksums (`.sha1`, `.md5`,
-  `.sha256`, `.sha512`), signatures (`.asc`) and `maven-metadata*.xml`, with a role taken
+  `.sha256`, `.sha512`; the registry serves its own) and `maven-metadata*.xml`, with a role taken
   from its name: `<artifactId>-<version>.pom` is the `pom`, the file with the packaging's
   extension the `archive` (`jar` for `jar`, `maven-plugin`, `ejb` and `bundle`; `aar`,
   `war`, `ear` as they are; none for `pom` packaging), `-sources.jar` the `sources`,
   `-javadoc.jar` the `javadoc`, `.module` the Gradle `module` metadata, and anything
-  else (classified jars, distributions) `extra`.
+  else (classified jars, distributions, `.asc` signatures) `extra`.
 - **Manifest**: `groupId`, `artifactId`, `version`, `packaging` (default `jar`), the POM
   itself, and the project's dependencies with their `scope` (default `compile`) and
   `optional` flag (`<dependencyManagement>` is ignored).

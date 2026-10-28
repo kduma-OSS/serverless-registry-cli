@@ -102,6 +102,7 @@ fn publishes_a_jar_with_sources_javadoc_and_module() {
             ("sdk-1.4.0-sources.jar", "sources"),
             ("sdk-1.4.0-javadoc.jar", "javadoc"),
             ("sdk-1.4.0-all.jar", "extra"),
+            ("sdk-1.4.0.jar.asc", "extra"),
         ]
     );
     let dir = repo().join("com/acme/sdk/1.4.0");

@@ -33,7 +33,7 @@ async fn publishes_the_selected_artifact_with_all_its_files() {
         .await;
     Mock::given(method("PUT"))
         .respond_with(ResponseTemplate::new(200))
-        .expect(6)
+        .expect(7)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -121,6 +121,7 @@ async fn publishes_the_selected_artifact_with_all_its_files() {
             ("sdk-1.4.0-sources.jar", "sources"),
             ("sdk-1.4.0-javadoc.jar", "javadoc"),
             ("sdk-1.4.0-all.jar", "extra"),
+            ("sdk-1.4.0.jar.asc", "extra"),
         ]
     );
     for file in init["files"].as_array().unwrap() {

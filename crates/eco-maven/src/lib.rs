@@ -5,8 +5,9 @@
 //! `maven-publish` with a `file://` repository): it finds
 //! `<group/as/path>/<artifactId>/<version>/<artifactId>-<version>.pom`, reads the POM
 //! (which must be an effective POM) into the manifest and publishes every file of the
-//! version directory except checksums, signatures and `maven-metadata*.xml`, with a
-//! role derived from its name. Nothing is run except `git`, for the release tag.
+//! version directory except checksums and `maven-metadata*.xml`, with a role derived
+//! from its name (`.asc` signatures are published as `extra` files). Nothing is run
+//! except `git`, for the release tag.
 
 #![deny(unsafe_code)]
 
@@ -34,8 +35,8 @@ pub const MODULE_ROLE: &str = "module";
 pub const EXTRA_ROLE: &str = "extra";
 
 /// Suffixes of the files a repository keeps next to the artifacts, which are not
-/// published: checksums and signatures.
-const SKIPPED_SUFFIXES: [&str; 5] = [".sha1", ".md5", ".sha256", ".sha512", ".asc"];
+/// published: checksums, which the registry computes and serves itself.
+const SKIPPED_SUFFIXES: [&str; 4] = [".sha1", ".md5", ".sha256", ".sha512"];
 
 /// How a local repository is produced, for error messages.
 const REPOSITORY_HINT: &str = "deploy the build into a local repository with `mvn deploy \
@@ -309,7 +310,7 @@ pub fn archive_extension(packaging: &str) -> Option<&str> {
     }
 }
 
-/// Checksums, signatures and repository metadata are not published.
+/// Checksums and repository metadata are not published; signatures are.
 fn is_skipped(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     SKIPPED_SUFFIXES
@@ -455,13 +456,12 @@ mod tests {
     }
 
     #[test]
-    fn checksums_signatures_and_metadata_are_skipped() {
+    fn checksums_and_metadata_are_skipped() {
         for name in [
             "sdk-1.0.0.jar.sha1",
             "sdk-1.0.0.pom.MD5",
             "sdk-1.0.0.jar.sha256",
             "sdk-1.0.0.jar.sha512",
-            "sdk-1.0.0.jar.asc",
             "sdk-1.0.0.jar.asc.sha1",
             "maven-metadata.xml",
             "maven-metadata-local.xml",
@@ -470,6 +470,7 @@ mod tests {
         }
         for name in [
             "sdk-1.0.0.jar",
+            "sdk-1.0.0.jar.asc",
             "sdk-1.0.0.module",
             "sdk-1.0.0-all.zip",
             "metadata.xml",
