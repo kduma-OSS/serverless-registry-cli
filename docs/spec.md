@@ -45,7 +45,7 @@ The Worker never passes archive bytes through itself: the CLI uploads them with 
 
 ## Credentials
 
-One credential = the identity of a project (a consumer, a package's CI, or an admin) with exactly one role and a list of auth entries. The record comes from KV or from an external HTTP provider. The token is `[<source>.]<project>:[<type>.]<secret>` – a login:password pair in one string, which works as Bearer, Basic and as a raw header.
+One credential = the identity of a project (a consumer, a package's CI, both, or an admin) with one or more roles, grants per role and a list of auth entries, each limited to some of the roles. The record comes from KV or from an external HTTP provider. The token is `[<source>.]<project>:[<type>.]<secret>` – a login:password pair in one string, which works as Bearer, Basic and as a raw header.
 
 **Token format**
 
@@ -67,7 +67,7 @@ okta.ci-acme-sdk:gh.eyJ…                                provider "okta", OIDC
 
 **Parsing**: 1) split at the first colon into login and password; 2) login: one segment → project, two → `source.project`; 3) password: no dot → type `key`, with a dot → the first segment is the type, the rest is the secret. The lists of providers and types are used only for validation, not for determining boundaries.
 
-**Login `_` (identity from the JWT)**: the reserved login `_` (not allowed by the slug regex) means "the project follows from the credential" and is allowed only with the `gh` type: `_:gh.<jwt>`. The Worker verifies the JWT as usual and then, using the `gh-repo:<owner/repo>` index in KV (a list of projects, maintained on every credential write in the panel/API), picks the credential whose `gh` entry matches the `repository`/`ref`/`workflow` claims. Ambiguity is resolved by the kind of request: the publishing endpoints pick `kind: publish`, reads pick `kind: read`, so one repository can be a consumer and a publisher at the same time. When more than one project matches for the given kind → `401` with a message saying that the project must be given. `whoami` and `publishedBy` record the resolved name, never `_`.
+**Login `_` (identity from the JWT)**: the reserved login `_` (not allowed by the slug regex) means "the project follows from the credential" and is allowed only with the `gh` type: `_:gh.<jwt>`. The Worker verifies the JWT as usual and then, using the `gh-repo:<owner/repo>` index in KV (a list of projects, maintained on every credential write in the panel/API), picks the credential whose `gh` entry matches the `repository`/`ref`/`workflow` claims. Ambiguity is resolved by the role the request needs: the publishing endpoints pick credentials with the `publish` role, reads pick the `read` role, and only an entry whose `scope` covers that role counts, so one repository can be a consumer and a publisher at the same time, in two credentials or in one. When more than one project matches for the given role → `401` with a message saying that the project must be given. `whoami` and `publishedBy` record the resolved name, never `_`.
 
 **Authentication forms accepted by the Worker**
 
@@ -88,7 +88,7 @@ okta.ci-acme-sdk:gh.eyJ…                                provider "okta", OIDC
 **Record sources** – an interface `CredentialSource { resolve(project, type, secret): Record | null }` with two implementations:
 
 - `KvSource` (no source prefix): reads `cred:<project>` and verifies the secret with the verifier for its type: `key` → SHA-256 compared in constant time with every active entry; `gh` → the JWT signature checked against the keys from `https://token.actions.githubusercontent.com/.well-known/jwks` (cached for 24 h), `iss`, `aud` = `PUBLIC_URL`, `exp`, and the `repository`/`ref`/`workflow` claims against the entry in the record; the JWKS is cached in the Cache API (24 h), and the JWT itself is verified on every request – an ES256/RS256 signature costs a fraction of a millisecond, while a cache in KV would eat up the write limit.
-- `HttpSource` (`<source>` from `AUTH_PROVIDERS`): `POST <url>` with `Authorization: Bearer <shared secret from vars>` and the body `{ "project", "type", "secret" }`; the provider answers `200` with a record in the same shape as in KV (`kind`, `grants`, optionally `expires`, `cacheSeconds`) or `403`. Positive answers are cached in the Cache API under the hash of the whole token (TTL from `cacheSeconds`, default 60 s, max 300 s), negative ones for 10 s. Provider unavailable → `503` for tokens from that source, never a fallback to no auth. Projects from providers are not editable in the panel; logging in with them works normally.
+- `HttpSource` (`<source>` from `AUTH_PROVIDERS`): `POST <url>` with `Authorization: Bearer <shared secret from vars>` and the body `{ "project", "type", "secret" }`; the provider answers `200` with a record in the same shape as in KV (`roles`, `grants`, optionally `expires`, `cacheSeconds`) or `403`. Positive answers are cached in the Cache API under the hash of the whole token (TTL from `cacheSeconds`, default 60 s, max 300 s), negative ones for 10 s. Provider unavailable → `503` for tokens from that source, never a fallback to no auth. Projects from providers are not editable in the panel; logging in with them works normally.
 
 `admin` credentials are always local in KV. `whoami` and `publishedBy` in the manifest record `[<source>.]<project>`.
 
@@ -99,7 +99,7 @@ okta.ci-acme-sdk:gh.eyJ…                                provider "okta", OIDC
 ```json
 {
   "project": "shop-frontend",
-  "kind": "read",
+  "roles": ["read"],
   "auth": [
     { "type": "key", "hash": "sha256:…", "created": "2026-10-28", "expires": null },
     { "type": "key", "hash": "sha256:…", "created": "2026-06-01", "expires": "2026-11-11" },
@@ -111,13 +111,48 @@ okta.ci-acme-sdk:gh.eyJ…                                provider "okta", OIDC
       "workflow": null
     }
   ],
-  "grants": [
-    { "eco": "composer", "package": "acme/*", "versions": "*" },
-    { "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": false },
-    { "eco": "cargo", "package": "acme-core", "versions": ">=1.4, <2" }
-  ]
+  "grants": {
+    "read": [
+      { "eco": "composer", "package": "acme/*", "versions": "*" },
+      { "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": false },
+      { "eco": "cargo", "package": "acme-core", "versions": ">=1.4, <2" }
+    ],
+    "publish": []
+  }
 }
 ```
+
+A credential that is both a consumer and a publisher has `"roles": ["read", "publish"]`, a list of grants under each role, and a `scope` on every secret:
+
+```json
+{
+  "project": "acme-sdk",
+  "roles": ["read", "publish"],
+  "auth": [
+    {
+      "type": "key",
+      "hash": "sha256:…",
+      "scope": ["read"],
+      "created": "2026-10-28",
+      "expires": null
+    },
+    {
+      "type": "gh",
+      "repository": "acme/acme-sdk",
+      "ref": "refs/tags/v*",
+      "scope": ["publish"],
+      "created": "2026-10-28",
+      "expires": null
+    }
+  ],
+  "grants": {
+    "read": [{ "eco": "composer", "package": "acme/*", "versions": "*" }],
+    "publish": [{ "eco": "composer", "package": "acme/acme-sdk", "versions": "*" }]
+  }
+}
+```
+
+Records written before roles existed (`"kind": "read"` and a flat `"grants": [...]`) read as `roles: [kind]` with the list under that role; data migration 4 rewrites them.
 
 A `gh` entry matches the claims of a GitHub Actions JWT; every field except `repository` is optional and means "any" when omitted or `null`:
 
@@ -133,11 +168,12 @@ A `gh` entry matches the claims of a GitHub Actions JWT; every field except `rep
 
 For `publish`, at least `ref: refs/tags/v*` or `workflow` is recommended, so that only the release workflow can publish, not any PR. The `iss`, `aud`, `exp` and `nbf` fields are checked by the kernel, not by the entry.
 
-- `kind`: exactly one role per credential – `read` (consumer: installation, token committed in the consumer's repository), `publish` (a package's CI: only `init`/`commit`, no reading of indexes; token in GHA secrets) or `admin` (panel and administrative API). A single field, not an array: combinations are deliberately impossible, so that a token with write permission never ends up in a consumer's repository.
+- `roles`: `read` (consumer: installation, token committed in the consumer's repository), `publish` (a package's CI: only `init`/`commit`, no reading of indexes; token in GHA secrets), both, or `admin` alone (panel and administrative API). `read` and `publish` may be held together; `admin` is never combined with them.
+- `scope` (on every `auth` entry): the roles that secret may use, a non-empty subset of the credential's roles. This is what keeps a token with write permission out of a consumer's repository now that one credential can hold both roles: the `key` committed to a consumer's repository gets `["read"]`, the `gh` entry of the release workflow gets `["publish"]`. When creating a secret for a credential with both roles the scope must be given; with a single role it is that role and need not be stored. A secret never gains a role: adding a role to a credential leaves its existing secrets with the roles they had. A secret authenticates a request only for a role in its scope; for any other the answer is `403`, and the `_` login ignores entries whose scope lacks the role the request needs. Panel sessions (cookies) never carry `publish`.
 - `admin` has no grants (`grants` are ignored) and cannot install or publish anything – it is used only by a human in the browser (panel) or directly through the API.
-- `grants.package`: an exact name or a `*` glob at the end of a segment; `grants.versions`: a semver constraint in the syntax of the given ecosystem, evaluated in the Worker, `*` = all. No grant for an ecosystem = no access. For `read` a grant says "what you may install", for `publish` "what you may release".
+- `grants.package`: an exact name or a `*` glob at the end of a segment; `grants.versions`: a semver constraint in the syntax of the given ecosystem, evaluated in the Worker, `*` = all. No grant for an ecosystem = no access. The `read` grants say "what you may install", the `publish` grants "what you may release"; they are separate lists, so a credential may install `acme/*` and publish only `acme/sdk`.
 - `grants.transitive` (`read` only, default `true`): the grant also covers the package's dependencies that are in this registry. The Worker computes the closure from the **constraints** declared in the manifests (`native`): starting from the versions covered by the grant, it takes their dependencies that point to packages of the same ecosystem in the registry, admits the versions that satisfy the constraint, and so on recursively. The result is exactly the set of versions the consumer's resolver may legitimately choose: A `1.x` with `"B": "^1.1"` gives access to B 1.1.0 and 1.4.0, but not to B 2.0; when A 1.5 declares `"B": "^2.0"`, the closure extends by itself. `optional`, `dev` and `peer` dependencies count like normal ones. Transitive access is not a grant on B: a consumer that wants B directly, with its own, wider constraint, needs an explicit grant. `generic` declares no dependencies, so it does not take part. `publish` always requires an explicit grant for every package it releases. The closure is computed from the dependency graph `_meta/deps/<eco>.json` in R2 (updated at commit, yank and delete together with the index) and cached in the Cache API with a TTL of 60 s – with no writes to KV and no invalidation.
-- `auth`: a list of credentials of different types; it enables rotation without changing the identity or the grants (the admin adds a new entry, sets `expires` on the old one, the cron removes expired ones) and combining types: a consumer credential usually has a `key` (committed, for humans) and optionally a `gh` (for the consumer's CI, with no secret in the repository); a `publish` credential usually has `gh`, and optionally also `key` (e.g. for publishing from outside GitHub Actions). The JWT exists only inside a GitHub Actions job, so `gh` never replaces `key` for local work.
+- `auth`: a list of credentials of different types; it enables rotation without changing the identity or the grants (the admin adds a new entry, sets `expires` on the old one, the cron removes expired ones) and combining types: a consumer credential usually has a `key` (committed, for humans) and optionally a `gh` (for the consumer's CI, with no secret in the repository); a `publish` credential usually has `gh`, and optionally also `key` (e.g. for publishing from outside GitHub Actions); a credential with both roles scopes each secret. The JWT exists only inside a GitHub Actions job, so `gh` never replaces `key` for local work.
 - KV is eventually consistent (up to ~60 s for propagation); for token revocation this is acceptable.
 
 **Panel session**: after login, the Worker issues an `HttpOnly; Secure; SameSite=Lax` cookie containing a payload `{ project, exp }` signed with HMAC (secret `SESSION_SECRET`), valid for 12 h – with nothing written to KV; the lack of revocation before expiry is acceptable at this horizon, and changing `SESSION_SECRET` invalidates all sessions.
@@ -212,7 +248,7 @@ _Publishing flow diagram (6 steps):_ 1) the CLI calls `init` on the Worker with 
 
 The Worker sees only metadata and one `head()` per file; if an object in staging does not match the declaration from `init`, commit rejects it and nothing goes into the index.
 
-**`POST /api/v1/publish/init`** (kind `publish`)
+**`POST /api/v1/publish/init`** (role `publish`)
 
 ```json
 {
@@ -408,46 +444,46 @@ Client: any HTTP client with the `Authorization: Bearer <token>` header (or Basi
 
 **Own API** (`/api/v1/…`, JSON, Bearer)
 
-| Endpoint                                                                         | Kind      | Description                                                       |
+| Endpoint                                                                         | Role      | Description                                                       |
 | -------------------------------------------------------------------------------- | --------- | ----------------------------------------------------------------- |
 | `POST /api/v1/publish/init`, `POST /api/v1/publish/commit`                       | `publish` | see Publishing                                                    |
 | `GET /api/v1/packages`                                                           | `read`    | packages and versions available to the credential (home page)     |
 | `GET /api/v1/packages/<eco>/<name>`                                              | `read`    | versions of one package                                           |
 | `POST /api/v1/packages/<eco>/<name>/<version>/yank`, `DELETE …/<version>`        | `admin`   | yank, delete                                                      |
 | `POST /api/v1/packages/<eco>/<name>/reindex`                                     | `admin`   | rebuild the index from manifests                                  |
-| `GET/POST /api/v1/credentials`, `GET/PATCH/DELETE /api/v1/credentials/<project>` | `admin`   | list, create, edit grants, delete                                 |
+| `GET/POST /api/v1/credentials`, `GET/PATCH/DELETE /api/v1/credentials/<project>` | `admin`   | list, create, edit grants and roles, delete                       |
 | `POST /api/v1/credentials/<project>/secrets`, `DELETE …/secrets/<hash-prefix>`   | `admin`   | add a new secret (returns the full token once), expire an old one |
-| `GET /api/v1/whoami`                                                             | any       | project name, kind, grants                                        |
+| `GET /api/v1/whoami`                                                             | any       | project name, roles, grants                                       |
 | `GET /api/v1/version`                                                            | none      | Worker version, `minClientVersion`, `schema_version`              |
 
 All native-protocol responses have `Cache-Control: private, no-store` – indexes depend on the credential.
 
 ## Home page and panel
 
-One HTML + CSS application with minimal vanilla JS (only `fetch` to `/api/v1`), served from Workers Static Assets, without a bundler or external dependencies. The user's role follows from the kind field of the credential they logged in with.
+One HTML + CSS application with minimal vanilla JS (only `fetch` to `/api/v1`), served from Workers Static Assets, without a bundler or external dependencies. The user's view follows from the roles of the credential they logged in with (a secret limited to `publish` does not open the panel of a credential that can also read).
 
 **Login** (`GET /`): the registry's name above one centred card with "Sign in", a pill switch between a single "token" field and two fields "login / password" (two radios styled by CSS; scripts show only the chosen fields, without scripts both stay visible), a "show" button on the secret fields and a full-width "Sign in" button; a failed login shows its error above the switch. The footer names the version and links the documentation. `POST /login` verifies like any other request, creates a session in KV and sets the cookie. `POST /logout` deletes the session. The first-run form and the pages that show a new token once share the centred card.
 
-**Consumer view** (kind `read`):
+**Consumer view** (role `read`):
 
 - One list of the packages from explicit grants, sorted by name (case-insensitive), not grouped by ecosystem: each row shows an ecosystem badge, the name, the number of versions covered by the grant and the latest of them (marked when yanked), and links to the package page. A filter bar (name, ecosystem chips) only hides rows; without JavaScript the full list stays usable. Packages available transitively are not a separate list.
 - The package page `GET /packages/<eco>/<name>` (the name as one URL segment, `/` as `%2F`): the versions the credential may see, each a link with its date, yanked marker and number of files; the "dependencies" subtree, collapsed by default and omitted when empty, with the packages and version ranges that this grant opens (each linking to its own page, which a `read` credential may open through the closure); and ready-to-paste snippets for this one package with the domain and package name filled in and `<token>` as a placeholder: `composer.json` + `auth.json` (bearer and http-basic variants) and a variant without auth.json, with the token as userinfo in the repository URL (https://\<token>@\<domain>/composer – the token is already a login:password pair), `.npmrc`, `.cargo/config.toml`. The snippets are generated by `adapter.clientConfig(baseUrl, token, [name])`, each with a header row (title, file name, "copy" button). (editorial note: the snippets are collapsed under "Configuration and installation", each with a one-line description; alternatives of one group, such as a command, files or environment variables, or Maven and Gradle, are shown one at a time in a chooser that works without JavaScript, and every adapter offers the command and environment-variable variants its client supports. A generic page also shows an `sreg generic get` example built from a label the package has. Names of npm, Composer, NuGet and Swift packages are found in any casing.)
 - The version page `GET /packages/<eco>/<name>/<version>`: its files with size, role and labels, `sha256` and any extra `digests`, and a download link `GET /packages/<eco>/<name>/<version>/files/<file>`, which checks the session's access to the version exactly like the native routes (explicit grants, then the closure) and answers `302` to a presigned `GET` (15 minutes) for every ecosystem. (editorial note: the native URLs are not shown; a collapsed "Get exactly this version" section shows the adapter's `versionSnippets`, which pin the version; a generic version also shows its `meta` as a table, on the version page only.)
 - The package routes need a session (without one they redirect to the login page); `admin` sees every package and version, `publish` gets its notice with `403`, and a package or version the credential may not see is a `404`.
 
-**Admin pages** (kind `admin`): the header links **Packages · Credentials · Settings** (the current one highlighted) and "Log out"; `GET /` sends an admin on to `/admin/packages` (`303`). Admin pages need an admin session: without a session they redirect to the login page, other kinds get a notice with `403`.
+**Admin pages** (role `admin`): the header links **Packages · Credentials · Settings** (the current one highlighted) and "Log out"; `GET /` sends an admin on to `/admin/packages` (`303`). Admin pages need an admin session: without a session they redirect to the login page, other roles get a notice with `403`.
 
 - `/admin/packages`: the consumer list (sorted, filterable, each row linking to the package page) with "Reindex" and "Delete" at the end of each row. The package page `GET /packages/<eco>/<name>` is the same page for everyone; an admin also gets "Yank" and "Delete" on every version, "Reindex" in the header and "Delete package" in a danger zone, which asks to type the package name. Instead of what a grant opens, the admin's collapsed "Dependencies" lists every package of the registry that any version depends on, directly or indirectly, with the constraints and the versions they admit.
-- `/admin/credentials`: a table of the projects (kind, number of active secrets, nearest expiry, number of grants) with a filter by project, each row linking to the credential's page, and a "New credential" button.
-- `/admin/credentials/new`: the creation form alone (project, kind as a read/publish/admin switch with what each kind may do, grants as eco/package/versions rows – hidden for admin – and, for admin, an optional chosen password). It is posted to the same path and answered with a "Credential created" page that shows the new token once, with a copy button and a link to the credential's page; nothing stores the token for later.
-- `/admin/credentials/<project>`: server-rendered tabs under the heading, chosen with `?tab=` (plain links that work without JavaScript; an unknown value shows the overview): **Overview** (the default: kind, login, created, active secrets and their ids, nearest expiry, plus the counts of grants and secrets linking to the other tabs), **Grants** (editable rows, "Save grants"; with JavaScript, "Edit as text" switches to one grant per line in the CLI shorthand `eco:package[:versions[:transitive]]` to copy and paste, also on the creation form: the text is read back into the rows, `transitive` is written only for `read` grants and only when it is off), **Secrets** (type, id, created, expires, the claims of `gh` secrets; "Expire…" on active ones reveals the date and the confirm, which are shown inline without JavaScript; above the table a primary "Add a secret" button unfolds the form – a `<details>`, opened by `?tab=secrets&add=1` and when a refused form is shown again – for a `key`, with an optional chosen password for admin credentials, or `gh` with "Look up" and pin-on-first-use; posted to `…/secrets`, a new `key` answered with the token page like a new credential, a `gh` secret redirected to `?tab=secrets`) and **Danger zone** (deleting the credential after its name is typed). The project `new` is linked as `/admin/credentials/%6Eew`, because `new` names the creation form.
+- `/admin/credentials`: a table of the projects (roles, number of active secrets, nearest expiry, number of grants of each role) with a filter by project, each row linking to the credential's page, and a "New credential" button.
+- `/admin/credentials/new`: the creation form alone (project, kind as a read/publish/read + publish/admin switch with what each may do, a list of grants as eco/package/versions rows for each role it holds – none for admin – for read + publish the scope of the first token, and, for admin, an optional chosen password). It is posted to the same path and answered with a "Credential created" page that shows the new token once, with a copy button and a link to the credential's page; nothing stores the token for later.
+- `/admin/credentials/<project>`: server-rendered tabs under the heading, chosen with `?tab=` (plain links that work without JavaScript; an unknown value shows the overview): **Overview** (the default: roles, login, created, active secrets and their ids, nearest expiry, plus the counts of grants and secrets linking to the other tabs), **Grants** (editable rows for each role, "Save read grants" / "Save publish grants", and the roles themselves with "Save roles"; with JavaScript, "Edit as text" switches to one grant per line in the CLI shorthand `eco:package[:versions[:transitive]]` to copy and paste, also on the creation form: the text is read back into the rows, `transitive` is written only for `read` grants and only when it is off), **Secrets** (type, id, scope, created, expires, the claims of `gh` secrets; "Expire…" on active ones reveals the date and the confirm, which are shown inline without JavaScript; above the table a primary "Add a secret" button unfolds the form – a `<details>`, opened by `?tab=secrets&add=1` and when a refused form is shown again – for a `key`, with an optional chosen password for admin credentials, or `gh` with "Look up" and pin-on-first-use, and the scope boxes when the credential holds both roles; posted to `…/secrets`, a new `key` answered with the token page like a new credential, a `gh` secret redirected to `?tab=secrets`) and **Danger zone** (deleting the credential after its name is typed). The project `new` is linked as `/admin/credentials/%6Eew`, because `new` names the creation form.
 - `/admin/settings`: read-only – Worker version, flags from `vars` (editorial note: an unset variable shows the default the Worker uses, marked as such), a link to the latest release on GitHub (if `CHECK_UPDATES=true`).
 
 The other admin mutations are `fetch` calls to `/api/v1` from `public/app.js`, followed by a reload; deletions confirm through a browser dialog or the typed name. Scripts are scoped by the `data-page` attribute of each page.
 
 **Setup checklist**: the first-run page and the admin settings page list the installation settings (required: `SESSION_SECRET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`; recommended: `PUBLIC_URL`; optional, with their defaults: `ECOSYSTEMS`, `MAX_UPLOAD_BYTES`, `APPEND_WINDOW_HOURS`, `TOKEN_PREFIX`, `CHECK_UPDATES`, `R2_BUCKET_NAME`) as Set, Missing or Default – whether a setting is present, never a secret's value – with how to add the missing ones (the dashboard path, `npx wrangler secret put <NAME>` for secrets) and, for `SESSION_SECRET`, a value generated in the browser. While `SESSION_SECRET` is missing the first run shows only the checklist and creates no admin, since nobody could sign in.
 
-**First run**: no credential at all in KV → the page shows a "create admin" form (name + generated secret, shown once). Once the first credential of kind `admin` is created, the form disappears permanently. Without this, the user would have to type hashes into KV by hand.
+**First run**: no credential at all in KV → the page shows a "create admin" form (name + generated secret, shown once). Once the first credential with the `admin` role is created, the form disappears permanently. Without this, the user would have to type hashes into KV by hand.
 
 **Panel security**: all mutations via `POST`/`PATCH`/`DELETE` with the `X-Requested-With` header (CSRF protection with a `SameSite=Lax` cookie), `Content-Security-Policy: default-src 'self'`, no inline scripts. The panel's own form posts (login, logout, first run, a new credential, a new secret) carry no such header and are accepted only from the registry's own origin (`Origin`, or `Sec-Fetch-Site: same-origin` when `Origin` is hidden).
 
@@ -633,6 +669,7 @@ wrangler.jsonc  CHANGELOG.md  README.md
 
 | Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 10      | 2026-10-28 | Credentials with roles: one credential may hold `read` and `publish` together (`admin` stays alone), with separate grants per role (`read_grants`, `publish_grants`) and a `scope` on every secret that limits it to some of the roles, which is required when the credential holds both. `kind` and the flat `grants` stay in API responses as the legacy view. Data migration 4 rewrites `cred:*` records.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | 9       | 2026-10-28 | CLI: `--archive` for composer, npm, cargo and nuget publishes a prebuilt archive byte for byte (identity, version and dependencies from the manifest inside it, no git or native tools), and `--source-registry-index` for cargo migrates crates built for a retired registry (`registry: null`) without changing the archive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | 8       | 2026-10-28 | Optimisation for the free plan limits: KV only for state changed by a human. The grant closure from the `_meta/deps/<eco>.json` graph in R2 and the Cache API (no `closure:*` keys and no invalidation), JWKS and `HttpSource` in the Cache API, JWTs not cached, panel sessions as signed cookies (`SESSION_SECRET`, no `session:*` in KV), a credential cache in the isolate's memory. A new "Free plan limits" section in Deploy; D1 noted as an alternative.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | 7       | 2026-10-28 | The Swift ecosystem (Package Registry SE-0292: release list, metadata, manifests as `manifest` files, archive through `302`, identifiers; `sreg swift publish` through `archive-source` + `dump-package`) and the Maven ecosystem (Maven 2 layout for Maven/Gradle/Android: `maven-metadata.xml`, files through `302`, checksums from `digests`; several files per version, `archive` from `<packaging>` including `.aar`, `.module`; no SNAPSHOT; `sreg maven publish --from-dir`).                                                                                                                                                                                                                                                                                                                                                                                                                                  |

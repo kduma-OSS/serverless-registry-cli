@@ -73,7 +73,7 @@ The Worker processes an `/api/v1` request in this order and answers with the fir
 2. Routing → `404 not_found` for an unknown path or an unsupported method on a known path.
 3. Body parsing and size → `400 invalid_request`, `413 payload_too_large`.
 4. Authentication → `401 unauthorized`, `503 provider_unavailable`.
-5. Kind check → `403 forbidden`.
+5. Role check → `403 forbidden`.
 6. Field validation → `400 invalid_request`, `413 payload_too_large`.
 7. Grant check and endpoint logic → `400 upload_incomplete`, `403 forbidden`, `404 not_found`,
    `409 …`.
@@ -162,7 +162,7 @@ secret, new grants) takes effect within about a minute, like KV propagation.
 ### 2.3 Panel sessions
 
 After a successful login (with any form of 2.2, including `_:gh.<jwt>`, which resolves with
-kind `read`) the panel sets the cookie `sreg_session` (`HttpOnly; Secure; SameSite=Lax;
+the `read` role) the panel sets the cookie `sreg_session` (`HttpOnly; Secure; SameSite=Lax;
 Path=/`, 12 hours). The session is not stored on the server: the cookie value is
 `<payload>.<signature>`, where the payload is the base64url JSON `{ "project", "exp" }` and the
 signature its base64url HMAC-SHA256 with the Worker secret `SESSION_SECRET`. The Worker
@@ -178,18 +178,25 @@ The panel calls the same endpoints authenticated by its session cookie instead o
 rejected with `403 forbidden` (CSRF protection). Requests authenticated with `Authorization`
 do not need that header. The CLI never uses cookies.
 
-### 2.4 Credential kinds
+### 2.4 Credential roles
 
-Every credential has exactly one kind:
+A credential has one or more roles: `read`, `publish` or both, or `admin` alone. Each role
+has its own list of grants. Every secret (an auth entry) has a `scope`, the roles it may use,
+a non-empty subset of the credential's roles. A request uses the roles of the credential
+within the scope of the secret that authenticated it:
 
-| Kind      | May call                                                                                     |
+| Role      | May call                                                                                     |
 | --------- | -------------------------------------------------------------------------------------------- |
-| `read`    | `whoami`, package listing and generic feed (filtered by its grants)                          |
-| `publish` | `whoami`, `publish/init`, `publish/commit` (within its grants)                               |
+| `read`    | `whoami`, package listing and generic feed (filtered by its `read` grants)                   |
+| `publish` | `whoami`, `publish/init`, `publish/commit` (within its `publish` grants)                     |
 | `admin`   | `whoami`, package listing and generic feed (unfiltered), package administration, credentials |
 
-Any kind may hold `key` and `gh` entries; a `publish` credential usually has `gh` entries and
-may also have `key` entries (for publishing from outside GitHub Actions).
+Any role may hold `key` and `gh` entries; a `publish` credential usually has `gh` entries and
+may also have `key` entries (for publishing from outside GitHub Actions). A secret never
+gains a role: adding a role to a credential leaves its existing secrets with the roles they
+had, so a `key` committed to a consumer's repository cannot start publishing. When a
+credential holds both roles, a new secret must say which it may use (`scope`, 6.17). A cookie
+session (2.3) never carries `publish`.
 
 Credential records are cached in the Worker isolate for 60 seconds. A deleted credential, an
 expired or removed secret and changed grants can therefore keep working for up to 60 seconds
@@ -197,7 +204,7 @@ on a warm isolate, in addition to KV propagation (up to about 60 seconds).
 
 `GET /api/v1/version` requires no credential. A missing, malformed, unknown, expired or
 otherwise invalid credential answers `401 unauthorized` with
-`WWW-Authenticate: Bearer realm="serverless-registry"`. A valid credential of the wrong kind,
+`WWW-Authenticate: Bearer realm="serverless-registry"`. A valid credential or secret without the role the endpoint needs,
 or without a grant for the requested package and version, answers `403 forbidden`.
 
 ### 2.5 `gh` entries and the `_` login
@@ -236,16 +243,17 @@ With the reserved login, `_:gh.<jwt>`, the Worker resolves the project from the 
    `gh-repo:<owner>/*`, both lower-cased (GitHub names are case-insensitive). Each value is a
    JSON array of project names; the union is the list of candidates.
 3. Load every candidate's record and keep the ones with a matching active `gh` entry.
-4. Keep only the credentials of the kind the request needs: `publish` for
-   `/api/v1/publish/*`, `read` for every other authenticated route (including the generic and
-   NuGet feeds and a panel login). An `admin` credential is never resolved through `_`.
+4. Keep only the credentials that hold the role the request needs, through a matching entry
+   whose `scope` includes it: `publish` for `/api/v1/publish/*`, `read` for every other
+   authenticated route (including the generic and NuGet feeds and a panel login). An `admin`
+   credential is never resolved through `_`.
 5. Exactly one left → that is the identity. None → `401 unauthorized`. More than one →
    `401 unauthorized` with the message
    "more than one project matches this token; use <project>:gh.<jwt>".
 
 The resolved name is what `whoami` returns as `project` and what manifests record as
 `publishedBy`; `_` never appears there. A panel login with `_` resolves the same way, with
-kind `read`. Only KV credentials take part (a provider source cannot be combined with `_`).
+the `read` role. Only KV credentials take part (a provider source cannot be combined with `_`).
 
 The `gh-repo:<owner/repo>` index (and `gh-repo:<owner>/*` for owner globs) is maintained by
 every credential write in the API and the panel (create, replace grants, add or expire a
@@ -285,7 +293,7 @@ value according to its HTTP status. A few codes add fields after these two (`amb
 | `invalid_request`      | 400    | Malformed JSON, missing or invalid field, malformed header, constraint that cannot be parsed, and similar.                   |
 | `upload_incomplete`    | 400    | On `commit`: at least one declared file is missing from staging (its `PUT` never completed).                                 |
 | `unauthorized`         | 401    | No credential, or the credential could not be verified (unknown project, wrong secret, expired, bad JWT).                    |
-| `forbidden`            | 403    | Valid credential, but wrong kind, no matching grant, missing `X-Requested-With`, or a protected operation.                   |
+| `forbidden`            | 403    | Valid credential, but without the role, no matching grant, missing `X-Requested-With`, or a protected operation.             |
 | `not_found`            | 404    | Unknown path or method, unknown or disabled ecosystem, unknown package, version, file, credential, auth entry or `uploadId`. |
 | `version_exists`       | 409    | The version is already published (on `init` without `append`, and on `commit`).                                              |
 | `version_closed`       | 409    | `append` to a version whose append window (`APPEND_WINDOW_HOURS`) has passed, or that is yanked.                             |
@@ -309,18 +317,20 @@ always present but may be `null`.
 
 ```ts
 type Eco = "composer" | "npm" | "cargo" | "generic" | "nuget" | "swift" | "maven";
-type Kind = "read" | "publish" | "admin";
+type Kind = "read" | "publish" | "admin"; // a role of a credential
+type Role = "read" | "publish"; // the roles that can be held together, and that scope a secret
 
 interface Grant {
   eco: Eco;
   package: string; // exact name or a pattern with a trailing "*" (see 5.1)
   versions: string; // version constraint in the ecosystem's syntax, "*" = all
-  transitive?: boolean; // default true; only meaningful for kind "read" (see 5.3)
+  transitive?: boolean; // default true; only meaningful in "read" grants (see 5.3)
 }
 
 interface KeyAuthEntry {
   id: string; // 12 lower-case hex chars: the prefix of the secret's SHA-256
   type: "key";
+  scope: Kind[]; // the roles this secret may use, within the credential's roles
   created: string; // RFC 3339
   expires: string | null; // RFC 3339; null = never
 }
@@ -328,6 +338,7 @@ interface KeyAuthEntry {
 interface GhAuthEntry {
   id: string; // 12 lower-case hex chars, opaque and stable
   type: "gh";
+  scope: Kind[]; // the roles this secret may use, within the credential's roles
   repository: string; // "owner/repo" or "owner/*" (2.5)
   repository_id: string | null; // digits; null = any
   repository_owner_id: string | null; // digits; null = any
@@ -343,9 +354,14 @@ type AuthEntry = KeyAuthEntry | GhAuthEntry;
 
 interface Credential {
   project: string; // local slug
-  kind: Kind;
+  roles: Kind[]; // ["admin"], or a non-empty subset of ["read", "publish"]
   auth: AuthEntry[]; // includes expired entries until the hourly cron removes them
-  grants: Grant[]; // always [] for kind "admin"
+  read_grants: Grant[]; // [] without the "read" role
+  publish_grants: Grant[]; // [] without the "publish" role
+  /** Deprecated, kept for clients written before roles: "read" when the credential holds it, else its only other role. */
+  kind: Kind;
+  /** Deprecated: the grants of `kind` (always [] for "admin"). */
+  grants: Grant[];
 }
 
 interface PackageFile {
@@ -414,7 +430,7 @@ the generic feed (section 8) are derived from it. Clients must treat an absent `
   The ecosystem's adapter evaluates it. A constraint that does not parse is
   `400 invalid_request`.
 - `transitive` (optional boolean, default `true`): for `read`, the grant also opens the
-  package's dependencies in this registry (5.3). It is accepted on input for every kind,
+  package's dependencies in this registry (5.3). It is accepted on input for every role,
   ignored for `publish` (publishing always needs an explicit grant) and meaningless for
   `admin`, which has no grants. The Worker stores it explicitly (`true` when it was absent)
   and always returns it, in the credentials API as well as in `whoami`.
@@ -507,7 +523,7 @@ packages depend on, as long as they are in this registry:
 
 ## 6. Endpoints
 
-| Method | Path                                                  | Kind            | Section |
+| Method | Path                                                  | Role            | Section |
 | ------ | ----------------------------------------------------- | --------------- | ------- |
 | GET    | `/api/v1/version`                                     | none            | 6.2     |
 | GET    | `/api/v1/whoami`                                      | any             | 6.3     |
@@ -554,22 +570,32 @@ Response `200`:
 
 ### 6.3 `GET /api/v1/whoami`
 
-Any kind. Response `200`:
+Any role. Response `200`:
 
 ```json
 {
   "project": "shop-frontend",
   "kind": "read",
-  "grants": [{ "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": true }]
+  "grants": [{ "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": true }],
+  "roles": ["read"],
+  "access": {
+    "read": [{ "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": true }]
+  }
 }
 ```
 
+`roles` are the roles this token may use: the credential's roles within the scope of the secret
+that authenticated the request. `access` has one list of grants per such role (`read`,
+`publish`); it has no key for a role the token may not use, and is `{}` for `admin`. `kind` and
+`grants` are the legacy view: `read` and its grants when the token may read, otherwise
+`publish` and its grants, `admin` and `[]` for admin.
+
 `project` is `[<source>.]<project>` (e.g. `okta.shop-frontend` for a provider-backed
-credential); for an `_:gh.<jwt>` token it is the resolved project name, never `_` (2.5). `grants` are returned as stored, with `transitive`; they are `[]` for `admin`.
+credential); for an `_:gh.<jwt>` token it is the resolved project name, never `_` (2.5). Grants are returned as stored, with `transitive`; they are `[]` for `admin`.
 
 ### 6.4 `POST /api/v1/publish/init`
 
-Kind `publish`. Validates the declaration, checks the grant and immutability (or the append
+Role `publish`. Validates the declaration, checks the grant and immutability (or the append
 rules, 6.4.1), stores the declaration in staging and returns one presigned upload URL per file.
 
 Request:
@@ -869,7 +895,7 @@ A file, once committed, is immutable; appending only adds entries to the version
 
 ### 6.5 `POST /api/v1/publish/commit`
 
-Kind `publish`, and the credential must be the one that called `init`.
+Role `publish`, and the credential must be the one that called `init`.
 
 Request:
 
@@ -973,7 +999,7 @@ to `commit` can therefore simply retry it.
 
 ### 6.6 `GET /api/v1/packages`
 
-Kind `read` or `admin`. Lists packages with their versions. For `read`, the top-level entries
+Role `read` or `admin`. Lists packages with their versions. For `read`, the top-level entries
 are the packages of the credential's explicit grants with the versions those grants cover;
 packages with no such version are omitted. Packages reachable only transitively (5.3) are not
 top-level entries: instead every `read` entry carries `dependencies`, the packages and
@@ -1053,7 +1079,7 @@ is the stored (lower-case) name.
 
 ### 6.7 `GET /api/v1/packages/<eco>/<name>`
 
-Kind `read` or `admin`. Response `200`: one `Package` object (same filtering and
+Role `read` or `admin`. Response `200`: one `Package` object (same filtering and
 `dependencies` as 6.6), e.g.
 `GET /api/v1/packages/npm/%40acme%2Fsdk`:
 
@@ -1078,7 +1104,7 @@ is covered by an explicit grant (a package reachable only transitively is listed
 
 ### 6.8 `POST /api/v1/packages/<eco>/<name>/<version>/yank`
 
-Kind `admin`. No body. Marks the version as yanked: it disappears from the composer and npm
+Role `admin`. No body. Marks the version as yanked: it disappears from the composer and npm
 indexes, is listed with `yanked: true` in the cargo index, is left out of the generic feed
 unless `?include=yanked` (section 8) and gets `listed: false` in the NuGet registration while
 the flat container keeps it (section 9). For swift it carries a `problem` in the release list
@@ -1104,7 +1130,7 @@ Errors: `404 not_found` (package or version).
 
 ### 6.9 `DELETE /api/v1/packages/<eco>/<name>/<version>`
 
-Kind `admin`. No body. Deletes the manifest and all files of the version and rebuilds the
+Role `admin`. No body. Deletes the manifest and all files of the version and rebuilds the
 index; consumers' lockfiles that point at it stop working, and the version can be published
 again. Dist-tags move as for yank.
 
@@ -1118,7 +1144,7 @@ Errors: `404 not_found`.
 
 ### 6.10 `DELETE /api/v1/packages/<eco>/<name>`
 
-Kind `admin`. No body. Deletes every version, the package's indexes and its entry in
+Role `admin`. No body. Deletes every version, the package's indexes and its entry in
 `_meta/packages.json`. Confirmation (typing the name) is the client's responsibility.
 
 Response `200`:
@@ -1131,7 +1157,7 @@ Errors: `404 not_found`.
 
 ### 6.11 `POST /api/v1/packages/<eco>/<name>/reindex`
 
-Kind `admin`. No body. Rebuilds the package's index files from the listing of its manifests.
+Role `admin`. No body. Rebuilds the package's index files from the listing of its manifests.
 It does not touch the manifests themselves (for example, it never recomputes `digests`).
 
 Response `200`:
@@ -1145,7 +1171,7 @@ Response `200`:
 
 ### 6.12 `GET /api/v1/credentials`
 
-Kind `admin`. Lists credentials stored in KV (provider-backed projects are not listed),
+Role `admin`. Lists credentials stored in KV (provider-backed projects are not listed),
 sorted by `project`.
 
 Response `200`:
@@ -1155,23 +1181,27 @@ Response `200`:
   "credentials": [
     {
       "project": "shop-frontend",
+      "roles": ["read"],
       "kind": "read",
       "auth": [
         {
           "id": "3f9a1c0b7d2e",
           "type": "key",
+          "scope": ["read"],
           "created": "2026-10-28T09:00:00Z",
           "expires": null
         },
         {
           "id": "a41d07e9c2b5",
           "type": "key",
+          "scope": ["read"],
           "created": "2026-06-01T08:30:00Z",
           "expires": "2026-11-11T00:00:00Z"
         },
         {
           "id": "c08e5b1f9a27",
           "type": "gh",
+          "scope": ["read"],
           "repository": "acme/shop-frontend",
           "repository_id": "123456789",
           "repository_owner_id": null,
@@ -1187,34 +1217,54 @@ Response `200`:
         { "eco": "composer", "package": "acme/*", "versions": "*", "transitive": true },
         { "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": false },
         { "eco": "cargo", "package": "acme-core", "versions": ">=1.4, <2", "transitive": true }
-      ]
+      ],
+      "read_grants": [
+        { "eco": "composer", "package": "acme/*", "versions": "*", "transitive": true },
+        { "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": false },
+        { "eco": "cargo", "package": "acme-core", "versions": ">=1.4, <2", "transitive": true }
+      ],
+      "publish_grants": []
     }
   ]
 }
 ```
 
+`kind` and `grants` are the legacy view (2.4, section 5): `roles`, `read_grants`,
+`publish_grants` and each entry's `scope` are authoritative.
+
 ### 6.13 `POST /api/v1/credentials`
 
-Kind `admin`. Creates a credential and, by default, its first `key` secret.
+Role `admin`. Creates a credential and, by default, its first `key` secret.
 
 Request:
 
-| Field     | Type    | Required | Description                                                                                                     |
-| --------- | ------- | -------- | --------------------------------------------------------------------------------------------------------------- |
-| `project` | string  | yes      | slug `[a-z0-9][a-z0-9-]{1,62}`                                                                                  |
-| `kind`    | string  | yes      | `read`, `publish` or `admin`                                                                                    |
-| `grants`  | Grant[] | no       | default `[]`; must be empty or absent for `admin`                                                               |
-| `secret`  | object  | no       | the first auth entry, same shape as the body of 6.17 (`password` for `admin` only); default `{ "type": "key" }` |
+| Field            | Type     | Required | Description                                                                                                                                                      |
+| ---------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`        | string   | yes      | slug `[a-z0-9][a-z0-9-]{1,62}`                                                                                                                                   |
+| `roles`          | string[] | yes\*    | `["admin"]`, or a non-empty list of `read` and `publish`                                                                                                         |
+| `kind`           | string   | yes\*    | legacy form of `roles` with one role: `read`, `publish` or `admin`; not together with `roles`                                                                    |
+| `read_grants`    | Grant[]  | no       | default `[]`; must be empty or absent without the `read` role                                                                                                    |
+| `publish_grants` | Grant[]  | no       | default `[]`; must be empty or absent without the `publish` role                                                                                                 |
+| `grants`         | Grant[]  | no       | legacy form: the grants of a credential with one role; `400` for two roles, and not together with `read_grants` or `publish_grants`; empty or absent for `admin` |
+| `secret`         | object   | no       | the first auth entry, same shape as the body of 6.17 (`password` for `admin` only, `scope` required with two roles); default `{ "type": "key" }`                 |
+
+\* One of `roles` and `kind`.
 
 Example:
 
 ```json
 {
-  "project": "shop-frontend",
-  "kind": "read",
-  "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*" }]
+  "project": "acme-sdk",
+  "roles": ["read", "publish"],
+  "read_grants": [{ "eco": "composer", "package": "acme/*", "versions": "*" }],
+  "publish_grants": [{ "eco": "composer", "package": "acme/acme-sdk", "versions": "*" }],
+  "secret": { "type": "key", "scope": ["read"] }
 }
 ```
+
+A credential with both roles needs a `scope` in `secret` (the default `{ "type": "key" }` is
+`400 invalid_request`), so that no token gets write permission by omission. The legacy
+request `{ "project": "shop-frontend", "kind": "read", "grants": [...] }` keeps working.
 
 Response `201`:
 
@@ -1222,11 +1272,22 @@ Response `201`:
 {
   "credential": {
     "project": "shop-frontend",
+    "roles": ["read"],
     "kind": "read",
     "auth": [
-      { "id": "3f9a1c0b7d2e", "type": "key", "created": "2026-10-28T09:00:00Z", "expires": null }
+      {
+        "id": "3f9a1c0b7d2e",
+        "type": "key",
+        "scope": ["read"],
+        "created": "2026-10-28T09:00:00Z",
+        "expires": null
+      }
     ],
-    "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*", "transitive": true }]
+    "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*", "transitive": true }],
+    "read_grants": [
+      { "eco": "composer", "package": "acme/*", "versions": "*", "transitive": true }
+    ],
+    "publish_grants": []
   },
   "token": "shop-frontend:k7Qx2mN9pLw4vR8sT1bYc3dF6hJ0aZ5e"
 }
@@ -1237,28 +1298,39 @@ Response `201`:
 
 ### 6.14 `GET /api/v1/credentials/<project>`
 
-Kind `admin`. Response `200`: one `Credential`. Errors: `404 not_found`.
+Role `admin`. Response `200`: one `Credential`. Errors: `404 not_found`.
 
 ### 6.15 `PATCH /api/v1/credentials/<project>`
 
-Kind `admin`. Replaces the grants and nothing else.
+Role `admin`. Replaces the grants of the roles named and/or changes the roles.
 
-Request:
+Request (at least one of the fields):
 
 ```json
-{ "grants": [{ "eco": "npm", "package": "@acme/*", "versions": "*" }] }
+{
+  "read_grants": [{ "eco": "npm", "package": "@acme/*", "versions": "*" }],
+  "roles": ["read", "publish"],
+  "publish_grants": [{ "eco": "npm", "package": "@acme/sdk", "versions": "*" }]
+}
 ```
 
-`grants` is required and replaces the whole list (`[]` removes all access). Any other known
-field (`project`, `kind`, `auth`) is `400 invalid_request`: kind and identity cannot change,
-secrets are managed with 6.17 and 6.18. Non-empty `grants` on an `admin` credential is
+`read_grants` and `publish_grants` each replace that role's whole list (`[]` removes all
+access); a list for a role the credential does not hold (after `roles` is applied) must be
+empty. The legacy `grants` replaces the list of a credential with one role, and is
+`400 invalid_request` for two roles or together with `read_grants` or `publish_grants`.
+`roles` may add or remove `read` and `publish`; a credential cannot become or stop being an
+`admin`. A removed role loses its grants. Existing secrets keep exactly the roles they had
+(adding a role never widens them); removing a role is `400 invalid_request` while an active
+secret would be left with no role, so expire that secret first (6.18). Any other known field
+(`project`, `kind`, `auth`) is `400 invalid_request`: identity cannot change, secrets are
+managed with 6.17 and 6.18. Non-empty grants on an `admin` credential are
 `400 invalid_request`.
 
 Response `200`: the updated `Credential`. Errors: `400 invalid_request`, `404 not_found`.
 
 ### 6.16 `DELETE /api/v1/credentials/<project>`
 
-Kind `admin`. No body. Deletes the credential; its tokens stop working (KV propagation and the
+Role `admin`. No body. Deletes the credential; its tokens stop working (KV propagation and the
 in-isolate credential cache can each take up to about 60 seconds, 2.4).
 
 Response `200`:
@@ -1272,22 +1344,23 @@ would lock everyone out of the panel).
 
 ### 6.17 `POST /api/v1/credentials/<project>/secrets`
 
-Kind `admin`. Adds an auth entry.
+Role `admin`. Adds an auth entry.
 
 Request:
 
-| Field                 | Type           | Required        | Description                                                                                                            |
-| --------------------- | -------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `type`                | string         | yes             | `key` or `gh`                                                                                                          |
-| `password`            | string         | no (`key` only) | `admin` credentials only: a chosen password instead of a generated secret (see below)                                  |
-| `expires`             | string \| null | no              | RFC 3339 or `YYYY-MM-DD`; default `null` (never)                                                                       |
-| `repository`          | string         | `gh`: yes       | `owner/repo` or `owner/*` (2.5)                                                                                        |
-| `repository_id`       | string \| null | no (`gh` only)  | digits only; `null` = any                                                                                              |
-| `repository_owner_id` | string \| null | no (`gh` only)  | digits only; `null` = any                                                                                              |
-| `ref`                 | string \| null | no (`gh` only)  | glob over the full ref, e.g. `refs/heads/main` or `refs/tags/v*`; `null` = any                                         |
-| `workflow`            | string \| null | no (`gh` only)  | workflow file path, e.g. `.github/workflows/release.yml`, matched against the `workflow_ref` claim (2.5); `null` = any |
-| `environment`         | string \| null | no (`gh` only)  | GitHub Actions environment name; `null` = any                                                                          |
-| `pin_on_first_use`    | boolean        | no (`gh` only)  | default `true`: the first matching token fills in a missing `repository_id` / `repository_owner_id` (2.5)              |
+| Field                 | Type           | Required        | Description                                                                                                                                             |
+| --------------------- | -------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`                | string         | yes             | `key` or `gh`                                                                                                                                           |
+| `scope`               | string[]       | two roles: yes  | the roles the secret may use: a non-empty list of the credential's `read` and `publish` roles; with one role the default is that role; none for `admin` |
+| `password`            | string         | no (`key` only) | `admin` credentials only: a chosen password instead of a generated secret (see below)                                                                   |
+| `expires`             | string \| null | no              | RFC 3339 or `YYYY-MM-DD`; default `null` (never)                                                                                                        |
+| `repository`          | string         | `gh`: yes       | `owner/repo` or `owner/*` (2.5)                                                                                                                         |
+| `repository_id`       | string \| null | no (`gh` only)  | digits only; `null` = any                                                                                                                               |
+| `repository_owner_id` | string \| null | no (`gh` only)  | digits only; `null` = any                                                                                                                               |
+| `ref`                 | string \| null | no (`gh` only)  | glob over the full ref, e.g. `refs/heads/main` or `refs/tags/v*`; `null` = any                                                                          |
+| `workflow`            | string \| null | no (`gh` only)  | workflow file path, e.g. `.github/workflows/release.yml`, matched against the `workflow_ref` claim (2.5); `null` = any                                  |
+| `environment`         | string \| null | no (`gh` only)  | GitHub Actions environment name; `null` = any                                                                                                           |
+| `pin_on_first_use`    | boolean        | no (`gh` only)  | default `true`: the first matching token fills in a missing `repository_id` / `repository_owner_id` (2.5)                                               |
 
 Passwords: an `admin` credential's `key` entry may hold a password chosen by the user instead
 of a generated secret: 12 to 128 characters of any script, printable, without `:` (it
@@ -1304,10 +1377,12 @@ characters of the SHA-256 of the stored string. Passwords with characters outsid
 with the Basic forms of 2.2 (the panel sends them so); a `Bearer` header carries only ASCII.
 
 Any of the `gh` fields (`pin_on_first_use` included) on a `key` entry is
-`400 invalid_request`, as is a `gh` entry identical (all six claim fields equal) to an
-existing active one. For `publish` credentials, set at
-least `ref` (e.g. `refs/tags/v*`) or `workflow`, so that only the release workflow can
-publish. The `repository_id` of a public repository can be looked up with 6.19.
+`400 invalid_request`, as is a `gh` entry identical (all six claim fields and the scope equal)
+to an existing active one; the same claims may appear twice with different scopes. A missing
+`scope` on a credential with both roles, an empty or repeated one, a role the credential does
+not hold, and any `scope` on an `admin` credential are `400 invalid_request`. For secrets
+whose scope includes `publish`, set at least `ref` (e.g. `refs/tags/v*`) or `workflow`, so
+that only the release workflow can publish. The `repository_id` of a public repository can be looked up with 6.19.
 
 Response `201` for `key`:
 
@@ -1316,6 +1391,7 @@ Response `201` for `key`:
   "secret": {
     "id": "7c21de4490ab",
     "type": "key",
+    "scope": ["read"],
     "created": "2026-10-28T09:10:00Z",
     "expires": null
   },
@@ -1330,6 +1406,7 @@ For `gh` the response has `secret` only, echoing every field (`null` when not se
   "secret": {
     "id": "c08e5b1f9a27",
     "type": "gh",
+    "scope": ["publish"],
     "repository": "acme/sdk",
     "repository_id": "123456789",
     "repository_owner_id": null,
@@ -1351,7 +1428,7 @@ in the future for every previously active `key` entry.
 
 ### 6.18 `DELETE /api/v1/credentials/<project>/secrets/<hash-prefix>`
 
-Kind `admin`. Expires an auth entry (it is not removed immediately; the hourly cron removes
+Role `admin`. Expires an auth entry (it is not removed immediately; the hourly cron removes
 entries whose `expires` has passed).
 
 Optional request body:
@@ -1377,7 +1454,7 @@ Errors: `400 invalid_request` (ambiguous prefix), `404 not_found`.
 
 ### 6.19 `GET /api/v1/github/repository?name=<owner/repo>`
 
-Kind `admin`. Looks up a GitHub repository so that the panel can fill in `repository_id` and
+Role `admin`. Looks up a GitHub repository so that the panel can fill in `repository_id` and
 `repository_owner_id` of a `gh` entry without contacting GitHub from the browser (the panel's
 Content Security Policy only allows its own origin). The Worker calls
 `https://api.github.com/repos/<owner>/<repo>` without credentials, so only public repositories
@@ -1544,8 +1621,8 @@ do not apply. It exists only while `generic` is enabled in `ECOSYSTEMS`; otherwi
 
 ### 8.1 Conventions
 
-- **Authentication**: any form of 2.2. Kind `read` sees only the versions covered by its
-  `generic` grants, kind `admin` sees everything, kind `publish` gets `403 forbidden`. A
+- **Authentication**: any form of 2.2. A token with the `read` role sees only the versions covered by its
+  `read` `generic` grants, `admin` sees everything, a token without `read` (`publish` only) gets `403 forbidden`. A
   missing or invalid credential gets `401 unauthorized` with
   `WWW-Authenticate: Bearer realm="serverless-registry"`. A `read` credential without a grant
   for the package gets `404 not_found`, as in section 4.
@@ -1750,8 +1827,8 @@ otherwise every `/nuget/…` path answers `404 not_found`.
 
 - **Authentication**: any form of 2.2. NuGet clients send Basic credentials from
   `packageSourceCredentials` in `nuget.config` (user name = the token's login, password = the
-  token's password); Bearer works too. Kind `read` sees only the versions allowed by its
-  `nuget` grants, including transitive access (5.3), kind `admin` sees everything, kind `publish` gets `403 forbidden`. A missing
+  token's password); Bearer works too. A token with the `read` role sees only the versions allowed by its
+  `read` `nuget` grants, including transitive access (5.3), `admin` sees everything, a token without `read` gets `403 forbidden`. A missing
   or invalid credential gets `401 unauthorized` with both
   `WWW-Authenticate: Basic realm="serverless-registry"` and
   `WWW-Authenticate: Bearer realm="serverless-registry"`, so that `dotnet` prompts for
@@ -1914,8 +1991,8 @@ clients configure is `<PUBLIC_URL>/swift`. It is not part of `/api/v1`: sections
 
 - **Authentication**: any form of 2.2; SwiftPM sends Basic (from
   `swift package-registry login --username/--password`, the keychain or `.netrc`) or Bearer
-  (`--token`). Kind `read` sees the versions allowed by its `swift` grants, including
-  transitive access (5.3); kind `admin` sees everything; kind `publish` gets `403`. A missing
+  (`--token`). A token with the `read` role sees the versions allowed by its `read` `swift` grants, including
+  transitive access (5.3); `admin` sees everything; a token without `read` gets `403`. A missing
   or invalid credential gets `401` with both `WWW-Authenticate: Basic realm="serverless-registry"`
   and `WWW-Authenticate: Bearer realm="serverless-registry"`. A `read` credential without
   access to the package gets `404`.
@@ -2022,9 +2099,9 @@ otherwise every `/maven/…` path answers `404 not_found`.
 
 - **Authentication**: any form of 2.2; Maven sends Basic from `settings.xml`
   (`<server><username>`/`<password>`), Gradle Basic from `credentials { username; password }`
-  or Bearer through `HttpHeaderCredentials`. Kind `read` sees the versions allowed by its
-  `maven` grants, including transitive access (5.3); kind `admin` sees everything; kind
-  `publish` gets `403`. A missing or invalid credential gets `401` with both
+  or Bearer through `HttpHeaderCredentials`. A token with the `read` role sees the versions allowed by its
+  `read` `maven` grants, including transitive access (5.3); `admin` sees everything; a token
+  without `read` gets `403`. A missing or invalid credential gets `401` with both
   `WWW-Authenticate: Basic realm="serverless-registry"` and
   `WWW-Authenticate: Bearer realm="serverless-registry"`, so that Maven sends its credentials.
   A `read` credential without access to the package gets `404`.
@@ -2115,7 +2192,7 @@ answers `404` in both cases, and the single-version endpoint `/npm/<name>/<versi
 - **Single version** (`GET /npm/<name>/<version-or-dist-tag>`): the version entry as in the
   packument; `404` when the version (or the version the tag points at) is not visible.
 - **`GET /npm/-/ping`** answers `{}` and **`GET /npm/-/whoami`** answers
-  `{ "username": "<project>" }`, for any credential kind (`publish` included).
+  `{ "username": "<project>" }`, for any credential role (`publish` included).
 
 ### 12.2 cargo (`/cargo/…`)
 

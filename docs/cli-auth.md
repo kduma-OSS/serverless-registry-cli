@@ -35,8 +35,11 @@ determine where the token is stored. No request is made to the registry itself.
   `audience=<registry URL without trailing slash>`, which must equal the Worker's
   `PUBLIC_URL`) and builds the token `<PROJECT>:gh.<jwt>` with `--project <PROJECT>`, or
   `_:gh.<jwt>` without it. The reserved login `_` asks the registry to find the project
-  from the JWT's `repository` claim; with `--project`, the credential `<PROJECT>` must
-  have a `gh` auth entry matching the repository (and, if set, the ref and workflow).
+  from the JWT's `repository` claim and the role the command needs (`read` for `auth`
+  and `get`, `publish` for publishing); with `--project`, the credential `<PROJECT>` must
+  have a `gh` auth entry matching the repository (and, if set, the ref and workflow) whose
+  scope includes that role. One credential may hold both roles, with a `gh` entry scoped to
+  each.
   `--project` is only accepted together with `--oidc`.
 
 GitHub OIDC tokens are short-lived (minutes), so run `sreg auth --oidc` right before the
