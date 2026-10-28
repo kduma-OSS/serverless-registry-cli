@@ -298,6 +298,37 @@ async fn oidc_publishes_with_a_github_token() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn tag_prefix_selects_the_package_tag() {
+    let server = MockServer::start().await;
+    let repo = repository(Some("v9.9.9"));
+    git(repo.path(), &["tag", "sdk/v1.5.0"]);
+    Mock::given(method("POST"))
+        .and(path("/api/v1/publish/init"))
+        .respond_with(init_responder(&server))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let assert = sreg(
+        &server,
+        &[
+            "composer",
+            "publish",
+            "--path",
+            repo.path().to_str().unwrap(),
+            "--tag-prefix",
+            "sdk/v",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    .await
+    .success();
+
+    assert_eq!(stdout_json(&assert)["version"], "1.5.0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn invalid_versions_stop_before_contacting_the_registry() {
     let server = MockServer::start().await;
     let repo = repository(None);
@@ -306,7 +337,7 @@ async fn invalid_versions_stop_before_contacting_the_registry() {
     sreg(&server, &["composer", "publish", "--path", dir])
         .await
         .code(1)
-        .stderr(predicate::str::contains("HEAD has no tag"));
+        .stderr(predicate::str::contains("no release tag"));
     sreg(
         &server,
         &[

@@ -158,10 +158,15 @@ pub struct PublishArgs {
     #[arg(long, value_name = "DIR", default_value = ".")]
     pub path: PathBuf,
 
-    /// Version to publish (composer: instead of the git tag of HEAD, e.g. v1.2.3 ->
+    /// Version to publish (composer: instead of the release tag on HEAD, e.g. v1.2.3 ->
     /// 1.2.3; npm, cargo and nuget: written into the manifest before packaging)
     #[arg(long = "version", id = "package_version", value_name = "VERSION")]
     pub version: Option<String>,
+
+    /// Take the version from the tag on HEAD that starts with this prefix, e.g. `foo/v`
+    /// for foo/v1.2.3 (default without --version: tags of the form v<semver>)
+    #[arg(long, value_name = "PREFIX", conflicts_with = "package_version")]
+    pub tag_prefix: Option<String>,
 
     /// Stop after the registry has accepted the upload declaration (`init`)
     #[arg(long)]
@@ -428,6 +433,30 @@ mod tests {
             .is_err());
         }
         assert!(Cli::try_parse_from(["sreg", "cargo", "publish", "--tag", "next"]).is_err());
+    }
+
+    #[cfg(feature = "composer")]
+    #[test]
+    fn tag_prefix_conflicts_with_version() {
+        let cli =
+            Cli::try_parse_from(["sreg", "composer", "publish", "--tag-prefix", "sdk/v"]).unwrap();
+        let Command::Composer {
+            command: ComposerCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected composer publish");
+        };
+        assert_eq!(args.publish.tag_prefix.as_deref(), Some("sdk/v"));
+        assert!(Cli::try_parse_from([
+            "sreg",
+            "composer",
+            "publish",
+            "--tag-prefix",
+            "sdk/v",
+            "--version",
+            "1.0.0"
+        ])
+        .is_err());
     }
 
     #[cfg(feature = "cargo")]

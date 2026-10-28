@@ -43,7 +43,7 @@ pub async fn run_packager(
     let opts = PackageOptions {
         path: args.path.clone(),
         version: args.version.clone(),
-        tag_prefix: None,
+        tag_prefix: args.tag_prefix.clone(),
         tag: tag.clone(),
         extra_args,
     };
