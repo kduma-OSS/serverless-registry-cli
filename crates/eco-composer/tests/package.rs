@@ -477,3 +477,193 @@ fn a_missing_composer_json_is_reported() {
         "{err}"
     );
 }
+
+mod archive_mode {
+    use std::io::Write;
+
+    use serde_json::json;
+    use sreg_core::ArchiveOptions;
+    use zip::write::SimpleFileOptions;
+
+    use super::*;
+
+    /// A runner that fails the test when anything is run.
+    struct Unreachable;
+
+    impl CommandRunner for Unreachable {
+        fn run(&self, program: &str, _: &[&str], _: &Path) -> Result<CommandOutput, Error> {
+            panic!("archive mode must not run {program}");
+        }
+    }
+
+    fn write_zip(path: &Path, files: &[(&str, String)]) {
+        let mut writer = zip::ZipWriter::new(File::create(path).unwrap());
+        for (name, content) in files {
+            writer
+                .start_file(*name, SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(content.as_bytes()).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    fn options(path: &Path, version: Option<&str>) -> ArchiveOptions {
+        ArchiveOptions {
+            path: path.to_path_buf(),
+            version: version.map(str::to_owned),
+        }
+    }
+
+    fn composer_json(version: Option<&str>) -> String {
+        let mut manifest = json!({
+            "name": "acme/sdk",
+            "require": { "php": ">=8.1", "psr/log": "^3.0" },
+            "autoload": { "psr-4": { "Acme\\Sdk\\": "src/" } }
+        });
+        if let Some(version) = version {
+            manifest["version"] = json!(version);
+        }
+        manifest.to_string()
+    }
+
+    #[test]
+    fn publishes_the_zip_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("package.zip");
+        write_zip(
+            &path,
+            &[
+                ("composer.json", composer_json(Some("1.2.3"))),
+                ("src/Client.php", "<?php\n".into()),
+            ],
+        );
+        let before = std::fs::read(&path).unwrap();
+
+        let package = ComposerPackager::with_runner(Unreachable)
+            .package_archive(&options(&path, Some("1.2.3")))
+            .unwrap();
+
+        assert_eq!(package.name, "acme/sdk");
+        assert_eq!(package.version, "1.2.3");
+        assert_eq!(package.manifest["require"]["psr/log"], "^3.0");
+        assert_eq!(package.files[0].path, path);
+        assert_eq!(package.files[0].name, "sdk-1.2.3.zip");
+        assert_eq!(package.files[0].size, before.len() as u64);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(package.workdir.is_none());
+    }
+
+    #[test]
+    fn version_comes_from_the_flag_when_the_manifest_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("package.zip");
+        write_zip(&path, &[("composer.json", composer_json(None))]);
+        let packager = ComposerPackager::with_runner(Unreachable);
+
+        let package = packager
+            .package_archive(&options(&path, Some("2.0.0-rc1")))
+            .unwrap();
+        assert_eq!(package.version, "2.0.0-rc1");
+        assert!(package.manifest.get("version").is_none());
+
+        let err = packager.package_archive(&options(&path, None)).unwrap_err();
+        assert!(err.to_string().contains("--version"), "{err}");
+        assert!(packager
+            .package_archive(&options(&path, Some("dev-main")))
+            .is_err());
+    }
+
+    #[test]
+    fn declared_and_requested_versions_must_agree() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("package.zip");
+        write_zip(&path, &[("composer.json", composer_json(Some("1.2.3")))]);
+        let packager = ComposerPackager::with_runner(Unreachable);
+
+        assert_eq!(
+            packager
+                .package_archive(&options(&path, None))
+                .unwrap()
+                .version,
+            "1.2.3"
+        );
+        let err = packager
+            .package_archive(&options(&path, Some("1.2.4")))
+            .unwrap_err();
+        assert!(err.to_string().contains("1.2.4"), "{err}");
+    }
+
+    #[test]
+    fn a_single_top_level_directory_is_looked_into() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("nested.zip");
+        write_zip(
+            &nested,
+            &[
+                (
+                    "acme-sdk-abc123/composer.json",
+                    composer_json(Some("1.0.0")),
+                ),
+                ("acme-sdk-abc123/src/Client.php", "<?php\n".into()),
+            ],
+        );
+        let package = ComposerPackager::with_runner(Unreachable)
+            .package_archive(&options(&nested, None))
+            .unwrap();
+        assert_eq!(package.name, "acme/sdk");
+
+        let two = dir.path().join("two.zip");
+        write_zip(
+            &two,
+            &[
+                ("a/composer.json", composer_json(Some("1.0.0"))),
+                ("b/composer.json", composer_json(Some("1.0.0"))),
+            ],
+        );
+        assert!(ComposerPackager::with_runner(Unreachable)
+            .package_archive(&options(&two, None))
+            .is_err());
+    }
+
+    #[test]
+    fn malformed_archives_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let packager = ComposerPackager::with_runner(Unreachable);
+        let write = |name: &str, files: &[(&str, String)]| {
+            let path = dir.path().join(name);
+            write_zip(&path, files);
+            path
+        };
+        let garbage = dir.path().join("garbage.zip");
+        std::fs::write(&garbage, b"PK nope").unwrap();
+        let cases = [
+            garbage,
+            dir.path().join("missing.zip"),
+            write("empty.zip", &[]),
+            write("no-manifest.zip", &[("src/a.php", "<?php".into())]),
+            write("bad-json.zip", &[("composer.json", "{".into())]),
+            write("array.zip", &[("composer.json", "[]".into())]),
+            write("no-name.zip", &[("composer.json", "{}".into())]),
+            write(
+                "bad-name.zip",
+                &[(
+                    "composer.json",
+                    r#"{"name":"Acme/Sdk","version":"1.0.0"}"#.into(),
+                )],
+            ),
+            write(
+                "bad-version.zip",
+                &[("composer.json", composer_json(Some("v1.0")))],
+            ),
+        ];
+        for path in cases {
+            assert!(
+                packager
+                    .package_archive(&options(&path, Some("1.0.0")))
+                    .is_err(),
+                "{}",
+                path.display()
+            );
+        }
+    }
+}
