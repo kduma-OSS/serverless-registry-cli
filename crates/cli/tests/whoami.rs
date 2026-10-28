@@ -212,3 +212,39 @@ async fn whoami_for_admin_has_no_grants() {
             "none (admin credentials have no grants)",
         ));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn whoami_of_a_yank_or_delete_login_lists_the_approved_operations() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/whoami"))
+        .respond_with(json(
+            200,
+            json!({
+                "project": "root", "kind": "admin", "grants": [], "roles": ["admin"],
+                "access": {},
+                "ops": [
+                    { "op": "yank", "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" },
+                    { "op": "delete", "eco": "cargo", "package": "acme-core" }
+                ]
+            }),
+        ))
+        .mount(&server)
+        .await;
+
+    sreg(&server, &["whoami"])
+        .await
+        .success()
+        .stdout(predicate::str::contains("Roles:   admin"))
+        .stdout(predicate::str::contains("this token may do only these"))
+        .stdout(predicate::str::contains("yank npm @acme/sdk 2.3.1"))
+        .stdout(predicate::str::contains(
+            "delete cargo acme-core (the whole package, every version)",
+        ))
+        .stdout(predicate::str::contains("admin credentials have no grants").not());
+
+    let assert = sreg(&server, &["whoami", "--json"]).await.success();
+    let body = stdout_json(&assert);
+    assert_eq!(body["ops"][0]["op"], "yank");
+    assert_eq!(body["ops"][1]["package"], "acme-core");
+}

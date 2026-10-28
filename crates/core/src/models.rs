@@ -164,7 +164,8 @@ pub struct Access {
 pub struct Whoami {
     /// `[<source>.]<project>` of the credential.
     pub project: String,
-    /// Legacy view of the roles: `read` when the token may read, otherwise its other role.
+    /// Legacy view of the roles: `admin` when the token may administer, otherwise `read` when
+    /// it may read, otherwise `publish`.
     pub kind: Kind,
     /// Legacy view of the grants: those of `kind`; empty for `admin`.
     pub grants: Vec<Grant>,
@@ -175,6 +176,24 @@ pub struct Whoami {
     /// The grants of each role in [`roles`](Self::roles); see [`Whoami::role_grants`].
     #[serde(default, skip_serializing_if = "Access::is_empty")]
     pub access: Access,
+    /// A yank or delete login token only: the operations it may perform, and nothing else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ops: Vec<TokenOperation>,
+}
+
+/// An operation a yank or delete login token was approved for (`ops` of
+/// `GET /api/v1/whoami`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenOperation {
+    /// `yank` or `delete`.
+    pub op: String,
+    /// Ecosystem of the package.
+    pub eco: Ecosystem,
+    /// Package name as the registry stores it.
+    pub package: String,
+    /// The version; absent for a delete of the whole package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 impl Access {
@@ -195,8 +214,9 @@ impl Whoami {
     }
 
     /// The grants of each of the token's roles that carries grants (`admin` has none), in
-    /// `read`, `publish` order. A registry that does not send `access` reports its legacy
-    /// `grants` under `kind`.
+    /// `read`, `publish` order. A registry that does not send `access` is older than
+    /// credential roles: its legacy `grants` are reported under `kind`, which then is a
+    /// single role, so an `admin` has none.
     pub fn role_grants(&self) -> Vec<(Kind, &[Grant])> {
         if self.access.is_empty() {
             return match self.kind {
@@ -613,11 +633,12 @@ impl AuthEntry {
 pub struct Credential {
     /// Local project slug.
     pub project: String,
-    /// Legacy view of the roles: `read` when the credential holds it, otherwise its other
-    /// role.
+    /// Legacy view of the roles: `admin` when the credential holds it, otherwise `read` when
+    /// it holds that, otherwise `publish`.
     pub kind: Kind,
-    /// The roles of the credential: `admin` alone, or `read` and/or `publish`. Empty when the
-    /// registry predates credential roles; see [`Credential::held_roles`].
+    /// The roles of the credential: any non-empty combination of `read`, `publish` and
+    /// `admin`. Empty when the registry predates credential roles; see
+    /// [`Credential::held_roles`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<Kind>,
     /// Auth entries, including expired ones until the cron removes them.
@@ -660,8 +681,9 @@ pub struct AddSecretRequest {
     /// Expiry (RFC 3339 or `YYYY-MM-DD`); omitted means never.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
-    /// The roles the secret may use. Required for a credential with both `read` and
-    /// `publish`; omitted otherwise.
+    /// The roles the secret may use: a non-empty list of the credential's roles. Required for
+    /// a credential with more than one role; omitted otherwise (the secret then has its only
+    /// role).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<Kind>,
     /// A note about the entry (at most 200 characters).
@@ -765,7 +787,8 @@ pub struct CreateCredentialRequest {
     /// [`roles`](Self::roles).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<Kind>,
-    /// The roles of the credential: `admin` alone, or `read` and/or `publish`.
+    /// The roles of the credential: any non-empty combination of `read`, `publish` and
+    /// `admin`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<Kind>,
     /// Legacy form: the grants of a credential with one role; must be empty for `admin`.
@@ -1258,6 +1281,28 @@ mod tests {
         assert_eq!(sections[0].1.len(), 1);
         assert_eq!(sections[1].0, Kind::Publish);
         assert!(sections[1].1.is_empty());
+    }
+
+    #[test]
+    fn whoami_of_a_yank_or_delete_login_lists_its_operations() {
+        let whoami: Whoami = serde_json::from_value(json!({
+            "project": "root", "kind": "admin", "grants": [], "roles": ["admin"],
+            "access": {},
+            "ops": [
+                { "op": "yank", "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" },
+                { "op": "delete", "eco": "cargo", "package": "acme-core" }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(whoami.token_roles(), vec![Kind::Admin]);
+        assert_eq!(whoami.ops.len(), 2);
+        assert_eq!(whoami.ops[0].version.as_deref(), Some("2.3.1"));
+        assert_eq!(whoami.ops[1].version, None);
+        let back = serde_json::to_value(&whoami).unwrap();
+        assert_eq!(
+            back["ops"][1],
+            json!({ "op": "delete", "eco": "cargo", "package": "acme-core" })
+        );
     }
 
     #[test]
