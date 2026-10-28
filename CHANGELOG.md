@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The GitHub Action repository is renamed to
+  [`kduma-OSS/serverless-registry-action`](https://github.com/kduma-OSS/serverless-registry-action),
+  which now also has `setup`, `auth` and `get` actions next to `publish`
+  (`uses: kduma-OSS/serverless-registry-action/publish@v1`); the release job dispatches
+  its Release workflow there.
+
 ## [0.1.1] - 2026-10-28
 
 ### Added

@@ -6,7 +6,7 @@ everything else (binaries, checksums, installers, the GitHub Release) is produce
 `Release` workflow (`.github/workflows/release.yml`). Releases are cut with the manual
 **Bump and release** workflow (`.github/workflows/bump-and-release.yml`), which sets the
 version, rolls the changelog, tags and starts the `Release` workflow. The GitHub Action,
-[`kduma-OSS/serverless-registry-publish-action`](https://github.com/kduma-OSS/serverless-registry-publish-action),
+[`kduma-OSS/serverless-registry-action`](https://github.com/kduma-OSS/serverless-registry-action),
 lives in its own repository and is released on its own; it installs these release
 binaries, and a stable CLI release makes it release itself with the new version as its
 default ([below](#releasing-the-github-action)).
@@ -160,13 +160,13 @@ node scripts/bump-version.mjs --current             # the current version
    repository picks the release up within an hour.
 3. **Check the result.** Run the shell installer from the new release, check
    `sreg --version`, and, once the action is released, let a workflow that uses
-   `kduma-OSS/serverless-registry-publish-action@v1` publish (or `dry-run: true`) a
+   `kduma-OSS/serverless-registry-action/publish@v1` publish (or `dry-run: true`) a
    package to a test registry.
 
 ## Releasing the GitHub Action
 
 The action
-([`kduma-OSS/serverless-registry-publish-action`](https://github.com/kduma-OSS/serverless-registry-publish-action))
+([`kduma-OSS/serverless-registry-action`](https://github.com/kduma-OSS/serverless-registry-action))
 has its own versions, changelog and release workflow; `@v1` follows its latest 1.x
 release. The `sreg` release it installs by default is the `default:` of its
 `sreg-version` input, so a new CLI release reaches `@v1` users only through a release of
@@ -180,7 +180,7 @@ skipped), in two ways:
    mints a token with `actions/create-github-app-token` and runs
 
    ```
-   gh workflow run release.yml -R kduma-OSS/serverless-registry-publish-action \
+   gh workflow run release.yml -R kduma-OSS/serverless-registry-action \
      -f sreg-version=v<version> -f bump=patch -f only-if-newer-sreg=true
    ```
 
@@ -196,7 +196,7 @@ Either way the action's own `GITHUB_TOKEN` makes the release commit, the tag, th
 release and moves `v1`; `only-if-newer-sreg` makes the second trigger a no-op. By hand:
 run the action repository's **Release** workflow with `sreg-version` (that is also the
 only way to make a CLI prerelease the default). See the action's
-[`docs/releasing.md`](https://github.com/kduma-OSS/serverless-registry-publish-action/blob/main/docs/releasing.md).
+[`docs/releasing.md`](https://github.com/kduma-OSS/serverless-registry-action/blob/main/docs/releasing.md).
 
 ### The GitHub App for the push
 
@@ -208,7 +208,7 @@ Set up once; no personal access token is involved.
    (no webhook). Repository permissions: **Actions: Read and write** and **Metadata:
    Read-only** (the default); nothing else.
 2. Install it on `kduma-OSS` with **Only select repositories** →
-   `kduma-OSS/serverless-registry-publish-action` (not on this repository).
+   `kduma-OSS/serverless-registry-action` (not on this repository).
 3. Generate a private key on the App's page (a `.pem` file is downloaded).
 4. In this repository (**Settings** → **Secrets and variables** → **Actions**), add two
    repository **secrets**: `SERVERLESS_REGISTRY_RELEASE_APP_ID` with the App ID and

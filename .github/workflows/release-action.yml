@@ -1,6 +1,6 @@
 # cargo-dist custom job (`post-announce-jobs = ["./release-action"]` in dist-workspace.toml),
 # called by release.yml after the GitHub Release is published. For a stable release it
-# starts the Release workflow of kduma-OSS/serverless-registry-publish-action with the new
+# starts the Release workflow of kduma-OSS/serverless-registry-action with the new
 # release as the action's default `sreg-version` (a patch release of the action).
 #
 # It authenticates as a GitHub App (repository secrets SERVERLESS_REGISTRY_RELEASE_APP_ID and
@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 env:
-  ACTION_REPOSITORY: kduma-OSS/serverless-registry-publish-action
+  ACTION_REPOSITORY: kduma-OSS/serverless-registry-action
 
 jobs:
   dispatch:
@@ -73,7 +73,7 @@ jobs:
           app-id: ${{ secrets.SERVERLESS_REGISTRY_RELEASE_APP_ID }}
           private-key: ${{ secrets.SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY }}
           owner: kduma-OSS
-          repositories: serverless-registry-publish-action
+          repositories: serverless-registry-action
 
       - name: Start the Release workflow of the action
         if: steps.app.outputs.configured == 'true'
