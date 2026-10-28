@@ -1,0 +1,4 @@
+# Prefer dependency versions whose `rust-version` is compatible with the
+# workspace MSRV when resolving the lockfile.
+[resolver]
+incompatible-rust-versions = "fallback"
