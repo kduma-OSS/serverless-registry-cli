@@ -29,8 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never send the token to the storage.
 - `sreg composer|npm|cargo|nuget publish` wired to the publish flow with `--version`,
   `--tag-prefix`, `--path`, `--dry-run`, `--skip-existing`, `--oidc` and
-  `--oidc-project` (`--tag` for npm); packaging for npm, cargo and nuget is not
-  implemented yet.
+  `--oidc-project` (`--tag` for npm).
 - Composer packaging (`sreg composer publish`): the name from `composer.json`, the
   version from `--version` or the release tag on `HEAD` (`v1.2.3` → `1.2.3`; releases
   and `alpha`/`beta`/`rc` prereleases only, `dev-*` rejected), the archive from
@@ -38,6 +37,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository becomes the archive root (the committed `composer.json` must match the one
   on disk), or, outside git, a deterministic zip of the directory without `vendor/` and
   `.git`; uploaded as `<package>-<version>.zip` with `composer.json` as the manifest.
+- npm packaging (`sreg npm publish`): `npm pkg set version=<v>` for a requested
+  version, `npm pack --json --pack-destination <tmp>`, `--workspace` for npm
+  workspaces, scoped names and semver versions only, `package/package.json` from the
+  tarball (without `_` fields) as the manifest and the tarball under the name `npm pack`
+  gave it; `--json`, `--pack-destination` and the workspace flags are reserved after `--`.
+- cargo packaging (`sreg cargo publish`): the crate found with `cargo metadata`
+  (`--package`, the crate of the current directory or the only member), a
+  formatting-preserving version rewrite of its `Cargo.toml` (`toml_edit`; refused for
+  `version.workspace = true`), `cargo package --no-verify --allow-dirty -p <crate>
+  --target-dir <tmp>`, and a cargo sparse-index line as the manifest (dependencies in
+  index shape, `features`/`features2` split like cargo, `links`, `rust_version`).
+- NuGet packaging (`sreg nuget publish`): `dotnet pack <project> -o <tmp>` with
+  `-p:PackageVersion=<v>`, `--project` (solutions refused), the `.nuspec` read from the
+  `.nupkg` into the manifest, the `.nupkg` as `archive` and the `.snupkg` as `symbols`
+  (`--no-symbols` to leave it out), both named `<id>.<version>` in lower case.
+- Without `--version` and `--tag-prefix`, npm, cargo and nuget use the `v<semver>` tag on
+  `HEAD` when there is one and the version of the project's manifest otherwise; changes
+  `sreg` makes to `package.json` or `Cargo.toml` are reported on stderr.
 - Release tag selection shared by all packagers (`sreg_core::git`): exactly one tag
   `v<semver>` on `HEAD`, or `<prefix><semver>` with `--tag-prefix <prefix>`.
 - `--skip-existing` on every publish command: an already published version (or appended
@@ -56,6 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release builds.
 
 ### Changed
+
+- `--path` is accepted by `sreg composer publish` only; npm, cargo and nuget publish
+  work in the current directory and select the package with `--workspace`, `--package`
+  and `--project`.
 
 - The OIDC project of the publish commands and of `sreg generic get` is now
   `--oidc-project` (`sreg nuget publish` will use `--project` for the `.csproj`);

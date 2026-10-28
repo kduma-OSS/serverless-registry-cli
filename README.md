@@ -16,18 +16,17 @@ The registry itself lives in the
 [`serverless-registry-worker`](https://github.com/kduma-OSS/serverless-registry-worker)
 repository.
 
-> **Work in progress.** The HTTP client, the publish flow, `composer publish`, `whoami`,
-> `auth`, `version` and the generic commands work; packaging for npm, cargo and NuGet is
-> not implemented yet, so their `publish` commands exit with an error.
+> **Work in progress.** The HTTP client, the publish flow, `composer`, `npm`, `cargo` and
+> `nuget publish`, `whoami`, `auth`, `version` and the generic commands work.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `sreg composer publish [--version <v> \| --tag-prefix <p>] [--path .]` | Archives the package directory `--path` (`git archive HEAD:<path>`, honouring `export-ignore`, falling back to a zip of the directory without `vendor/` and `.git/`) and reads its `composer.json`. The version comes from `--version` or the release tag on `HEAD` (`v1.2.3` → `1.2.3`, or `<prefix>1.2.3` with `--tag-prefix`); it must be semver with an optional `alpha`, `beta` or `rc` prerelease, `dev-*` versions are rejected. Arguments after `--` are rejected. See [Publishing a Composer package](#publishing-a-composer-package). |
-| `sreg npm publish [--version <v>] [--tag <t>] [--path .] [-- <npm args>]` | Runs `npm pack --json --pack-destination <tmp>` (arguments after `--` are passed through verbatim) and reads the name, version and `package.json` from the tarball. `--version` is written into the manifest before packing. |
-| `sreg cargo publish [--version <v>] [--path .] [-- <cargo args>]` | Runs `cargo package --no-verify --allow-dirty` (arguments after `--` are passed through verbatim, e.g. `-- --features ssl --locked`) and reads the `.crate` file and metadata from `cargo metadata`. `--version` is written into the manifest before packaging. |
-| `sreg nuget publish [--version <v>] [--path .] [-- <dotnet args>]` | Runs `dotnet pack` (arguments after `--` are passed through verbatim) and reads the `.nuspec` from the `.nupkg`. `--version` is written into the manifest before packing. |
+| `sreg npm publish [--version <v> \| --tag-prefix <p>] [--tag <t>] [--workspace <w>] [-- <npm pack args>]` | Writes the version into `package.json` with `npm pkg set version=<v>` (when one is requested), runs `npm pack --json --pack-destination <tmp>` in the current directory and reads `package/package.json` from the tarball. Scoped packages only. `--tag` sets the dist-tag. See [Publishing an npm package](#publishing-an-npm-package). |
+| `sreg cargo publish [--version <v> \| --tag-prefix <p>] [--package <crate>] [-- <cargo package args>]` | Writes the version into the crate's `Cargo.toml` (formatting preserved), runs `cargo package --no-verify --allow-dirty -p <crate> --target-dir <tmp>` and describes the crate with a sparse-index line built from `cargo metadata`. See [Publishing a crate](#publishing-a-crate). |
+| `sreg nuget publish [--version <v> \| --tag-prefix <p>] [--project <csproj>] [--no-symbols] [-- <dotnet pack args>]` | Runs `dotnet pack <project> -o <tmp>` (the version as `-p:PackageVersion=<v>`), reads the `.nuspec` from the `.nupkg` and publishes the `.nupkg` and, unless `--no-symbols`, the `.snupkg`. See [Publishing a NuGet package](#publishing-a-nuget-package). |
 | `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... [--meta-file <json>] [--spec <files.json>] [--no-append]` | Publishes files as one version of a generic package. `--label` applies to every file; `--spec` lists files with their own labels instead. Files are appended to an already published version (within the registry's append window) unless `--no-append` is given. Arguments after `--` are rejected. |
 | `sreg generic get <name> [<version>\|latest] [--label k=v]... [--out <dir>] [--prerelease]` | Downloads the files of a version matching the labels into `--out` after verifying size and SHA-256 and prints their paths; `--json` prints the feed entry without downloading. |
 | `sreg whoami` | Shows the identity and grants of the current token (`GET /api/v1/whoami`). |
@@ -45,6 +44,45 @@ instead of `REGISTRY_TOKEN`; `sreg generic get` accepts them too; `sreg auth` ca
 project `--project`). The composer, npm, cargo and nuget publish commands also accept
 `--tag-prefix <p>` instead of `--version`: the version is then taken from the tag on
 `HEAD` that starts with the prefix.
+
+### Packaging: what `sreg` calls
+
+`sreg` never runs the native tools' `publish`; it runs their packing commands, reads the
+result and uploads it itself. The flags `sreg` sets are reserved and rejected after
+`--`; everything else after `--` goes verbatim to the tool
+(`sreg cargo publish --version 1.2.0 -- --features ssl --locked`).
+
+| Ecosystem | Command | Flags set by `sreg` | Examples of flags to pass after `--` |
+| --- | --- | --- | --- |
+| composer | `git archive --format=zip HEAD:<path>` (fallback: a zip of the directory without `vendor/` and `.git/`) | – | – |
+| npm | `npm pack` | `--json`, `--pack-destination <tmp>`, `-w <pkg>` from `--workspace` | `--ignore-scripts` |
+| cargo | `cargo package` | `--no-verify`, `--allow-dirty`, `-p <crate>` from `--package`, `--target-dir <tmp>` | `--features`, `--locked`, `--manifest-path` |
+| nuget | `dotnet pack <project>` | `-o <tmp>`, `-p:PackageVersion=<v>` from `--version` | `-c Release`, `--no-build`, `--include-symbols` |
+| generic | none – the files are ready | – | – |
+
+### Monorepos
+
+Every publish command publishes one package in one version and works from any
+directory of the repository; several packages are several calls (a loop or a matrix).
+
+- composer: `--path packages/foo` archives `HEAD:packages/foo`.
+- npm: run in the root of the npm project and select the package with
+  `--workspace <name|path>` (`npm pack -w <…>`, `npm pkg set version=<v> -w <…>`).
+- cargo: `--package <crate>` (`cargo package -p <crate>`); without it, the crate of the
+  current directory, or the only crate of the workspace. A crate with
+  `version.workspace = true` cannot get its own `--version`: set the version in
+  `[workspace.package]` instead.
+- nuget: `--project <path to .csproj>`; without it, the single project file in the
+  current directory. Solutions (`.sln`) are refused, because they produce several
+  packages.
+- Version: `--version <v>`, or the release tag on `HEAD`. Tag the packages with a
+  prefix (`sdk/v1.2.0`, `cli-v0.4.0`) and pass `--tag-prefix sdk/v`; without
+  `--tag-prefix` only `v<semver>` tags are considered, and more than one on `HEAD` is an
+  error. npm, cargo and nuget fall back to the version in the project's own manifest
+  when `HEAD` carries no `v<semver>` tag (composer requires a tag or `--version`).
+
+When `sreg` writes the version into `package.json` or `Cargo.toml` it says so on stderr
+(`note: set the version in …`); the change is left in the working tree.
 
 Global options: `--registry <url>`, `--token <token>`, `--json` (machine-readable
 output only on stdout) and `-v`/`--verbose` (logs of `sreg` itself to stderr; tokens
@@ -116,6 +154,128 @@ jobs:
       - run: sreg composer publish --oidc --oidc-project acme-sdk
         env:
           REGISTRY_URL: https://packages.example.com
+```
+
+## Publishing an npm package
+
+```
+sreg npm publish --version 1.2.3                  # writes 1.2.3 into package.json first
+sreg npm publish                                  # the v<semver> tag on HEAD, or package.json
+sreg npm publish --tag beta -- --ignore-scripts   # dist-tag beta, no lifecycle scripts
+
+# npm workspaces, from the repository root, tagged sdk/v1.2.3
+sreg npm publish --workspace packages/sdk --tag-prefix sdk/v
+```
+
+- Only scoped packages (`@scope/name`) are served by the registry; the version must be
+  semver.
+- The tarball is uploaded under the name `npm pack` gave it (`@acme/sdk` 1.2.3 →
+  `acme-sdk-1.2.3.tgz`), and `package/package.json` from the tarball, without fields
+  starting with `_`, is the manifest.
+- `--tag` sets the dist-tag (`latest` by default, `next` for prereleases, decided by the
+  registry).
+
+## Publishing a crate
+
+```
+sreg cargo publish --version 1.4.2                # writes 1.4.2 into Cargo.toml first
+sreg cargo publish --package acme-core --tag-prefix core/v -- --locked
+```
+
+- `cargo metadata --no-deps` finds the crate: `--package`, else the crate whose
+  `Cargo.toml` is nearest to the current directory, else the only crate of the
+  workspace. `--manifest-path` after `--` is honoured by both `cargo metadata` and
+  `cargo package`.
+- The `.crate` is uploaded as `<name>-<version>.crate`. The manifest is the crate's line
+  of the cargo sparse index, built from `cargo metadata`: dependencies from crates.io
+  point at `https://github.com/rust-lang/crates.io-index`, dependencies from any other
+  registry (declare them with `registry = "<name>"`) are taken to come from this
+  registry. Path-only dev-dependencies are left out, as `cargo publish` does.
+- Make the registry known to cargo for consumers with `sreg auth cargo`.
+
+## Publishing a NuGet package
+
+```
+sreg nuget publish --version 1.2.0 -- -c Release
+sreg nuget publish --project src/Acme.Sdk/Acme.Sdk.csproj --tag-prefix sdk/v --no-symbols
+```
+
+- The `.nupkg` is uploaded as `<id>.<version>.nupkg` in lower case, and the `.snupkg`,
+  when `dotnet pack` produced one (e.g. with `-p:IncludeSymbols=true
+  -p:SymbolPackageFormat=snupkg`), as `<id>.<version>.snupkg` unless `--no-symbols` is
+  given. Legacy `.symbols.nupkg` packages are ignored.
+- The manifest holds the id, version, description, authors, project URL, license
+  expression, tags and dependency groups of the `.nuspec`, plus the `.nuspec` itself.
+
+## Publishing from GitHub Actions
+
+Publish on tag pushes; with `--oidc` no long-lived secret is needed (the job needs
+`id-token: write`):
+
+```yaml
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # sreg must be on PATH, e.g. installed from the GitHub releases
+      - run: sreg npm publish --oidc --oidc-project acme-sdk --skip-existing
+        env:
+          REGISTRY_URL: https://packages.example.com
+
+  cargo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sreg cargo publish --skip-existing -- --locked
+        env:
+          REGISTRY_URL: https://packages.example.com
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_PUBLISH_TOKEN }}
+
+  nuget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: sreg nuget publish --project src/Acme.Sdk/Acme.Sdk.csproj -- -c Release
+        env:
+          REGISTRY_URL: https://packages.example.com
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_PUBLISH_TOKEN }}
+```
+
+In a monorepo, tag each crate with its own prefix (`acme-core/v1.2.0`) and derive the
+package from the pushed tag:
+
+```yaml
+on:
+  push:
+    tags: ["*/v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          crate="${GITHUB_REF_NAME%/v*}"
+          sreg cargo publish --package "$crate" --tag-prefix "$crate/v" --skip-existing
+        env:
+          REGISTRY_URL: https://packages.example.com
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_PUBLISH_TOKEN }}
 ```
 
 ## Configuration
