@@ -1,0 +1,140 @@
+name: Serverless Registry publish
+description: >-
+  Install sreg from its GitHub release (checksum verified) and publish a Composer, npm,
+  cargo, NuGet, Swift, Maven or generic package to a Serverless Registry.
+author: kduma-OSS
+branding:
+  icon: package
+  color: orange
+
+inputs:
+  ecosystem:
+    description: "Ecosystem to publish: composer, npm, cargo, nuget, generic, swift or maven."
+    required: true
+  registry:
+    description: "Base URL of the registry, e.g. https://packages.example.com (REGISTRY_URL)."
+    required: true
+  token:
+    description: >-
+      Publish token (REGISTRY_TOKEN). When empty, the action authenticates with a GitHub
+      Actions OIDC token (`--oidc`); the job then needs `permissions: id-token: write`.
+    required: false
+    default: ""
+  oidc-project:
+    description: "With OIDC: the project the token is issued for (`--oidc-project`). By default the registry finds it from the repository."
+    required: false
+    default: ""
+  version:
+    description: "Version to publish (`--version`). Required for generic packages."
+    required: false
+    default: ""
+  tag-prefix:
+    description: "Take the version from the tag on HEAD with this prefix, e.g. `sdk/v` (`--tag-prefix`)."
+    required: false
+    default: ""
+  path:
+    description: "composer, swift: directory of the package (`--path`)."
+    required: false
+    default: ""
+  workspace:
+    description: "npm: workspace to publish (`--workspace`)."
+    required: false
+    default: ""
+  package:
+    description: "cargo: crate to publish (`--package`); generic: the package name."
+    required: false
+    default: ""
+  project:
+    description: "nuget: project file to pack (`--project`)."
+    required: false
+    default: ""
+  from-dir:
+    description: "maven: local repository the build deployed to (`--from-dir`)."
+    required: false
+    default: ""
+  coords:
+    description: "maven: artifact to publish, `<groupId>:<artifactId>` (`--coords`)."
+    required: false
+    default: ""
+  scope:
+    description: "swift: registry scope (`--scope`)."
+    required: false
+    default: ""
+  generic-files:
+    description: "generic: files to publish, one per line (glob patterns are expanded)."
+    required: false
+    default: ""
+  generic-labels:
+    description: "generic: labels for every file, `key=value`, one per line or comma-separated."
+    required: false
+    default: ""
+  extra-flags:
+    description: "Additional flags for `sreg <ecosystem> publish`, placed before `--` (shell-like quoting)."
+    required: false
+    default: ""
+  args:
+    description: "Arguments passed to the packaging tool after `--` (shell-like quoting)."
+    required: false
+    default: ""
+  dry-run:
+    description: "Stop after the registry has accepted the upload declaration (`--dry-run`)."
+    required: false
+    default: "false"
+  skip-existing:
+    description: "Succeed when the version is already published (`--skip-existing`)."
+    required: false
+    default: "true"
+  sreg-version:
+    description: "Release of sreg to install, e.g. `v0.1.0`. Defaults to the release this action was published with."
+    required: false
+    default: ""
+
+outputs:
+  name:
+    description: "Name of the published package."
+    value: ${{ steps.publish.outputs.name }}
+  version:
+    description: "Published version."
+    value: ${{ steps.publish.outputs.version }}
+  url:
+    description: "URL of the published version (empty for a dry run or a skipped version)."
+    value: ${{ steps.publish.outputs.url }}
+  skipped:
+    description: "`true` when the version was already published and `skip-existing` let the step succeed."
+    value: ${{ steps.publish.outputs.skipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install sreg
+      shell: bash
+      env:
+        SREG_VERSION: ${{ inputs.sreg-version }}
+        SREG_ACTION_PATH: ${{ github.action_path }}
+      run: bash "$SREG_ACTION_PATH/install.sh"
+
+    - name: Publish
+      id: publish
+      shell: bash
+      env:
+        REGISTRY_URL: ${{ inputs.registry }}
+        REGISTRY_TOKEN: ${{ inputs.token }}
+        INPUT_ECOSYSTEM: ${{ inputs.ecosystem }}
+        INPUT_OIDC_PROJECT: ${{ inputs.oidc-project }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        INPUT_PACKAGE: ${{ inputs.package }}
+        INPUT_PROJECT: ${{ inputs.project }}
+        INPUT_FROM_DIR: ${{ inputs.from-dir }}
+        INPUT_COORDS: ${{ inputs.coords }}
+        INPUT_SCOPE: ${{ inputs.scope }}
+        INPUT_GENERIC_FILES: ${{ inputs.generic-files }}
+        INPUT_GENERIC_LABELS: ${{ inputs.generic-labels }}
+        INPUT_EXTRA_FLAGS: ${{ inputs.extra-flags }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_SKIP_EXISTING: ${{ inputs.skip-existing }}
+        SREG_ACTION_PATH: ${{ github.action_path }}
+      run: bash "$SREG_ACTION_PATH/publish.sh"

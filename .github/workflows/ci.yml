@@ -55,6 +55,16 @@ jobs:
       - run: cargo clippy -p sreg-cli --all-targets --locked --no-default-features --features "${{ matrix.features }}" -- -D warnings
       - run: cargo test -p sreg-cli --locked --no-default-features --features "${{ matrix.features }}"
 
+  action:
+    name: Publish action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse action.yml
+        run: python3 -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1]))' action/action.yml
+      - name: Lint the action scripts
+        run: shellcheck action/*.sh
+
   msrv:
     name: Minimum supported Rust version
     runs-on: ubuntu-latest
