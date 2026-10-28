@@ -1,0 +1,204 @@
+# Bumps the version on main, rolls CHANGELOG.md, commits `chore(release): v<version>`, pushes
+# the annotated tag `v<version>` and starts the Release workflow (cargo-dist) for it.
+# See docs/releasing.md.
+name: Bump and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: >
+          How to change the version: prerelease (next -beta.N),
+          prepatch/preminor/premajor (start a prerelease of the next
+          patch/minor/major), patch/minor/major, release (drop the prerelease
+          suffix), none (release the current version as it is) or custom
+        type: choice
+        options: [prerelease, prepatch, preminor, premajor, patch, minor, major, release, none, custom]
+        default: prerelease
+      version:
+        description: The version to release (only with bump custom)
+        type: string
+        default: ""
+
+permissions:
+  # Push the release commit and the tag.
+  contents: write
+  # Dispatch the Release workflow.
+  actions: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Bump and release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse branches other than main
+        if: github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Releases are cut from main only, to keep them linear; this run was started from $REF. Run the workflow from main."
+          exit 1
+
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # Pushes made with GITHUB_TOKEN do not start other workflows; a tag pushed with a
+          # personal access token starts the Release workflow (see docs/releasing.md).
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+      - name: Check how the Release workflow will be started
+        id: trigger
+        env:
+          HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
+        run: |
+          if [ "$HAS_RELEASE_TOKEN" = true ]; then
+            echo "The tag is pushed with RELEASE_TOKEN; the push starts the Release workflow."
+            echo "mode=push" >> "$GITHUB_OUTPUT"
+          elif grep -Eq '^[[:space:]]*workflow_dispatch:' .github/workflows/release.yml; then
+            echo "The Release workflow is dispatched for the tag."
+            echo "mode=dispatch" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Nothing would start the Release workflow: a tag pushed with GITHUB_TOKEN starts no workflow, and release.yml has no workflow_dispatch trigger. Add a RELEASE_TOKEN secret (a token with contents: write) or set dispatch-releases = true in dist-workspace.toml and regenerate release.yml (see docs/releasing.md)."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compute the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          args=("$BUMP")
+          if [ -n "$VERSION" ]; then args+=("$VERSION"); fi
+          current=$(node scripts/bump-version.mjs --current)
+          next=$(node scripts/bump-version.mjs "${args[@]}")
+          tag="v$next"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "::error::The tag $tag already exists."
+            exit 1
+          fi
+          case "$next" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          echo "$current -> $next ($BUMP)"
+          {
+            echo "current=$current"
+            echo "version=$next"
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply the version and roll the changelog
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          args=("$BUMP")
+          if [ -n "$VERSION" ]; then args+=("$VERSION"); fi
+          node scripts/bump-version.mjs "${args[@]}" --dry-run
+          node scripts/bump-version.mjs "${args[@]}" --apply --notes-file "$RUNNER_TEMP/notes.md"
+          # The script already rewrote Cargo.lock; cargo corrects it should anything be missing.
+          cargo metadata --format-version 1 > /dev/null
+          git diff --stat
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Commit, tag and push
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock action/VERSION CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "Nothing changed; tagging main as it is."
+          else
+            git commit --message "chore(release): $TAG"
+          fi
+          { echo "$TAG"; echo; cat "$RUNNER_TEMP/notes.md"; } > "$RUNNER_TEMP/tag-message.md"
+          # verbatim: keep the "### Added" lines of the changelog in the tag message.
+          git tag --annotate --cleanup=verbatim --file "$RUNNER_TEMP/tag-message.md" "$TAG"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/$TAG"
+
+      - name: Start the Release workflow
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ steps.trigger.outputs.mode }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if [ "$MODE" = dispatch ]; then
+            gh workflow run release.yml --ref "$TAG" -f tag="$TAG"
+            event=workflow_dispatch
+          else
+            event=push
+          fi
+          url=""
+          for _ in $(seq 1 12); do
+            sleep 5
+            url=$(gh run list --workflow release.yml --event "$event" --branch "$TAG" --limit 1 \
+              --json url --jq '.[0].url // empty')
+            if [ -n "$url" ]; then break; fi
+          done
+          if [ -z "$url" ]; then
+            echo "::warning::The Release run for $TAG did not show up yet; check the Actions tab."
+            url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/release.yml"
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always() && steps.version.outputs.version != ''
+        env:
+          BUMP: ${{ inputs.bump }}
+          CURRENT: ${{ steps.version.outputs.current }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          RUN_URL: ${{ steps.release.outputs.url }}
+        run: |
+          repo="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          {
+            echo "## $TAG"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Version | \`$CURRENT\` → \`$VERSION\` (\`$BUMP\`) |"
+            echo "| Prerelease | $PRERELEASE |"
+            echo "| Tag | [$TAG]($repo/tree/$TAG) |"
+            if [ -n "$RUN_URL" ]; then
+              echo "| Release workflow | $RUN_URL |"
+              echo "| GitHub Release | $repo/releases/tag/$TAG (once the Release workflow finishes) |"
+            else
+              echo "| Release workflow | not started |"
+            fi
+            if [ -s "$RUNNER_TEMP/notes.md" ]; then
+              echo
+              echo "### Release notes"
+              echo
+              cat "$RUNNER_TEMP/notes.md"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

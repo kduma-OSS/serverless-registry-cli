@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names it in `X-Resolved-Version` and `X-Resolved-File`; the file is still verified
   against the size and SHA-256 of its feed entry. `409 ambiguous` lists the candidate
   files and exits with `1`; `--out` may name a file path instead of a directory.
+- **Bump and release** workflow (`.github/workflows/bump-and-release.yml`, started by hand
+  on `main`): computes the next version (`prerelease`, `patch`, `minor`, `release`,
+  `custom`, …) with the dependency-free `scripts/bump-version.mjs`, sets it in
+  `Cargo.toml`, `Cargo.lock` and `action/VERSION`, rolls `CHANGELOG.md`, commits and tags
+  `v<version>` and starts the cargo-dist `Release` workflow for the tag.
 
 ## [0.1.0] - 2026-10-28
 
