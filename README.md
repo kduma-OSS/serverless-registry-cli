@@ -62,10 +62,10 @@ In GitHub Actions, use the [publish action](#github-action), which does all of t
 
 | Command | What it does |
 | --- | --- |
-| `sreg composer publish [--version <v> \| --tag-prefix <p>] [--path .]` | Archives the package directory `--path` (`git archive HEAD:<path>`, honouring `export-ignore`, falling back to a zip of the directory without `vendor/` and `.git/`) and reads its `composer.json`. The version comes from `--version` or the release tag on `HEAD` (`v1.2.3` → `1.2.3`, or `<prefix>1.2.3` with `--tag-prefix`); it must be semver with an optional `alpha`, `beta` or `rc` prerelease, `dev-*` versions are rejected. Arguments after `--` are rejected. See [Publishing a Composer package](#publishing-a-composer-package). |
-| `sreg npm publish [--version <v> \| --tag-prefix <p>] [--tag <t>] [--workspace <w>] [-- <npm pack args>]` | Writes the version into `package.json` with `npm pkg set version=<v>` (when one is requested), runs `npm pack --json --pack-destination <tmp>` in the current directory and reads `package/package.json` from the tarball. Scoped packages only. `--tag` sets the dist-tag. See [Publishing an npm package](#publishing-an-npm-package). |
-| `sreg cargo publish [--version <v> \| --tag-prefix <p>] [--package <crate>] [-- <cargo package args>]` | Writes the version into the crate's `Cargo.toml` (formatting preserved), runs `cargo package --no-verify --allow-dirty -p <crate> --target-dir <tmp>` and describes the crate with a sparse-index line built from `cargo metadata`. See [Publishing a crate](#publishing-a-crate). |
-| `sreg nuget publish [--version <v> \| --tag-prefix <p>] [--project <csproj>] [--no-symbols] [-- <dotnet pack args>]` | Runs `dotnet pack <project> -o <tmp>` (the version as `-p:PackageVersion=<v>`), reads the `.nuspec` from the `.nupkg` and publishes the `.nupkg` and, unless `--no-symbols`, the `.snupkg`. See [Publishing a NuGet package](#publishing-a-nuget-package). |
+| `sreg composer publish [--version <v> \| --tag-prefix <p>] [--path . \| --archive <zip>]` | Archives the package directory `--path` (`git archive HEAD:<path>`, honouring `export-ignore`, falling back to a zip of the directory without `vendor/` and `.git/`) and reads its `composer.json`. The version comes from `--version` or the release tag on `HEAD` (`v1.2.3` → `1.2.3`, or `<prefix>1.2.3` with `--tag-prefix`); it must be semver with an optional `alpha`, `beta` or `rc` prerelease, `dev-*` versions are rejected. Arguments after `--` are rejected. With `--archive`, publishes a zip built earlier as it is. See [Publishing a Composer package](#publishing-a-composer-package) and [Publishing prebuilt archives](#publishing-prebuilt-archives). |
+| `sreg npm publish [--version <v> \| --tag-prefix <p>] [--tag <t>] [--workspace <w> \| --archive <tgz>] [-- <npm pack args>]` | Writes the version into `package.json` with `npm pkg set version=<v>` (when one is requested), runs `npm pack --json --pack-destination <tmp>` in the current directory and reads `package/package.json` from the tarball. Scoped packages only. `--tag` sets the dist-tag. With `--archive`, publishes a tarball built earlier as it is. See [Publishing an npm package](#publishing-an-npm-package) and [Publishing prebuilt archives](#publishing-prebuilt-archives). |
+| `sreg cargo publish [--version <v> \| --tag-prefix <p>] [--package <crate> \| --archive <crate-file> [--source-registry-index <url>]] [-- <cargo package args>]` | Writes the version into the crate's `Cargo.toml` (formatting preserved), runs `cargo package --no-verify --allow-dirty -p <crate> --target-dir <tmp>` and describes the crate with a sparse-index line built from `cargo metadata`. With `--archive`, publishes a `.crate` built earlier as it is. See [Publishing a crate](#publishing-a-crate) and [Publishing prebuilt archives](#publishing-prebuilt-archives). |
+| `sreg nuget publish [--version <v> \| --tag-prefix <p>] [--project <csproj>] [--no-symbols] [--archive <nupkg>] [-- <dotnet pack args>]` | Runs `dotnet pack <project> -o <tmp>` (the version as `-p:PackageVersion=<v>`), reads the `.nuspec` from the `.nupkg` and publishes the `.nupkg` and, unless `--no-symbols`, the `.snupkg`. With `--archive`, publishes a `.nupkg` built earlier as it is. See [Publishing a NuGet package](#publishing-a-nuget-package) and [Publishing prebuilt archives](#publishing-prebuilt-archives). |
 | `sreg swift publish --scope <scope> [--version <v> \| --tag-prefix <p>] [--path .] [--repository-url <url>] [-- <archive-source args>]` | Describes the package with `swift package dump-package`, archives it with `swift package archive-source -o <tmp>/<name>-<version>.zip` and publishes the zip with `Package.swift` and its `Package@swift-*.swift` variants as `<scope>.<name>`. The version comes from `--version` or the release tag on `HEAD`. See [Publishing a Swift package](#publishing-a-swift-package). |
 | `sreg maven publish [--version <v> \| --tag-prefix <p>] --from-dir <dir> [--coords <group:artifact>]` | Publishes one artifact version from a local Maven repository the build deployed to (`mvn deploy -DaltDeploymentRepository=local::file:./out`, or Gradle's `publish` to a `file://` repository): the effective POM as the manifest, the archive, sources, javadoc, Gradle module metadata and other files of the version directory. Arguments after `--` are rejected. See [Publishing Maven artifacts](#publishing-maven-artifacts). |
 | `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... [--meta-file <json>] [--spec <files.json>] [--no-append]` | Publishes files as one version of a generic package. `--label` applies to every file; `--spec` lists files with their own labels instead. Files are appended to an already published version (within the registry's append window) unless `--no-append` is given. Arguments after `--` are rejected. |
@@ -254,6 +254,64 @@ sreg nuget publish --project src/Acme.Sdk/Acme.Sdk.csproj --tag-prefix sdk/v --n
   given. Legacy `.symbols.nupkg` packages are ignored.
 - The manifest holds the id, version, description, authors, project URL, license
   expression, tags and dependency groups of the `.nuspec`, plus the `.nuspec` itself.
+
+## Publishing prebuilt archives
+
+Build, test and sign the distribution archives in one job and publish exactly those
+bytes from another, or migrate historical releases without changing their checksums:
+
+```
+sreg npm publish      --archive package.tgz
+sreg composer publish --archive package.zip
+sreg cargo publish    --archive package.crate
+sreg nuget publish    --archive Package.1.2.3.nupkg
+```
+
+- **The file is uploaded as it is**: no unpacking and repacking, and the SHA-256 the
+  registry records is the SHA-256 of the input file. The file is never renamed or
+  modified; only the name it is stored under follows the registry's conventions
+  (`<scope>-<name>-<version>.tgz`, `<package>-<version>.zip`, `<name>-<version>.crate`,
+  and `<id>.<version>.nupkg` in lower case, which the NuGet API requires).
+- **Identity, version and dependencies come from the manifest inside the archive**
+  (`package/package.json`, `composer.json`, `Cargo.toml`, the `.nuspec`). The archive is
+  read completely and must be a valid archive with a valid name and version; anything
+  else fails before the first request to the registry. A Composer zip may carry
+  `composer.json` at its root or in its single top-level directory.
+- **No git checkout and no native tool is needed** (`git`, `npm`, `cargo`, `dotnet` are
+  not run), and tags in the current directory are ignored.
+- **`--version`** is only a consistency check: it must equal the version in the archive.
+  The one exception is a Composer archive whose `composer.json` declares no `version`
+  (the usual case): there `--version` is the version to publish it as. It never
+  rewrites the archive.
+- Selecting or building a project does not apply, so `--archive` is rejected together
+  with `--tag-prefix`, `--path` (composer), `--workspace` (npm), `--package` (cargo),
+  `--project` and `--no-symbols` (nuget) and with arguments after `--`.
+- Authentication (`--oidc`), `--dry-run`, `--skip-existing`, `--json`, retries and exit
+  codes work as for source projects, and `npm publish --archive` still takes `--tag`.
+  The package is served through the registry's native feeds, like any other version.
+- A NuGet symbols package (`.snupkg`) is not published in this mode.
+
+### Migrating Cargo crates from another registry
+
+A crate built for a retired registry names that registry's index in its `Cargo.toml`
+(`registry-index = "sparse+https://old.example.com/cargo/index/"`). To publish such a
+crate on this registry without touching the archive, name the old index:
+
+```
+sreg cargo publish \
+  --archive licensing-kit-example-1.2.3.crate \
+  --source-registry-index sparse+https://old.example.com/cargo/index/
+```
+
+Dependencies that refer to that index are described in the sparse index of this registry
+as dependencies from the same registry (`registry: null`), so that cargo resolves them
+here and the old host is never contacted. The `Cargo.toml` in the archive and the archive
+itself stay unchanged, so the checksum is preserved. Dependencies from any other
+registry keep that registry's index URL, and crates.io dependencies stay crates.io
+dependencies. The URLs are compared without regard to the `sparse+` prefix, the case of
+the host and trailing slashes; `sreg` prints a note when no dependency refers to the
+index you gave (usually a typo). Without `--source-registry-index`, every registry keeps
+its identity. Publish the crates of a dependency graph dependencies first.
 
 ## Publishing a Swift package
 

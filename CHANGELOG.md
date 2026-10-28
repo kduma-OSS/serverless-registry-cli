@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--archive <file>` for `sreg npm|composer|cargo|nuget publish`: publish an archive built
+  earlier (`.tgz`, `.zip`, `.crate`, `.nupkg`) byte for byte. The package, version and
+  dependencies are read from the manifest inside the archive; no git checkout and no
+  native packaging tool is needed, and tags in the current directory are ignored.
+  `--version` is a consistency check (for a Composer archive without a `version`, the
+  version to publish). The archive is validated completely before the first request;
+  `--tag-prefix`, project and workspace selectors and arguments after `--` are rejected
+  together with it. Authentication, `--dry-run`, `--skip-existing` and `--json` work as
+  before.
+- `sreg cargo publish --archive … --source-registry-index <url>`: dependencies that refer
+  to the given (retired) registry index are described in the sparse index as
+  dependencies from this registry (`registry: null`), without changing the archive;
+  dependencies from other registries keep their identity.
+
 ## [0.1.2] - 2026-10-28
 
 ### Changed
