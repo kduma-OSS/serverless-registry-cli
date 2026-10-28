@@ -434,3 +434,127 @@ fn dotnet_failures_are_reported() {
         "{err:?}"
     );
 }
+
+mod archive_mode {
+    use sreg_core::ArchiveOptions;
+
+    use super::*;
+
+    /// A runner that fails the test when anything is run.
+    struct Unreachable;
+
+    impl CommandRunner for Unreachable {
+        fn run(&self, program: &str, _: &[&str], _: &Path) -> Result<CommandOutput, Error> {
+            panic!("archive mode must not run {program}");
+        }
+    }
+
+    fn options(path: &Path, version: Option<&str>) -> ArchiveOptions {
+        ArchiveOptions {
+            path: path.to_path_buf(),
+            version: version.map(str::to_owned),
+        }
+    }
+
+    fn nupkg(dir: &Path, file: &str) -> PathBuf {
+        let path = dir.join(file);
+        write_zip(
+            &path,
+            &[
+                ("Acme.Sdk.nuspec", fixture("Acme.Sdk.nuspec").as_bytes()),
+                ("lib/net8.0/Acme.Sdk.dll", b"MZ"),
+            ],
+        );
+        path
+    }
+
+    #[test]
+    fn uploads_the_package_under_the_normalised_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = nupkg(dir.path(), "Acme.Sdk.1.2.0.nupkg");
+        let before = std::fs::read(&path).unwrap();
+
+        let package = NugetPackager::with_runner(Unreachable)
+            .package_archive(&options(&path, Some("1.2.0")))
+            .unwrap();
+
+        assert_eq!(package.name, "Acme.Sdk");
+        assert_eq!(package.version, "1.2.0");
+        assert_eq!(package.manifest["nuspec"], fixture("Acme.Sdk.nuspec"));
+        assert_eq!(
+            package.manifest["dependencyGroups"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(package.files.len(), 1);
+        let file = &package.files[0];
+        assert_eq!(file.path, path);
+        assert_eq!(file.name, "acme.sdk.1.2.0.nupkg");
+        assert_eq!(file.role.as_deref(), Some("archive"));
+        assert_eq!(file.size, before.len() as u64);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "the input is unchanged"
+        );
+        assert!(package.workdir.is_none());
+    }
+
+    #[test]
+    fn the_version_flag_is_a_consistency_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = nupkg(dir.path(), "x.nupkg");
+        let packager = NugetPackager::with_runner(Unreachable);
+
+        assert!(packager
+            .package_archive(&options(&path, Some("1.2")))
+            .is_ok());
+        let err = packager
+            .package_archive(&options(&path, Some("1.3.0")))
+            .unwrap_err();
+        assert!(invalid_input(&err, "1.3.0"), "{err}");
+    }
+
+    #[test]
+    fn malformed_archives_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let packager = NugetPackager::with_runner(Unreachable);
+
+        let garbage = dir.path().join("garbage.nupkg");
+        std::fs::write(&garbage, b"nope").unwrap();
+        let no_nuspec = dir.path().join("none.nupkg");
+        write_zip(&no_nuspec, &[("lib/a.dll", b"MZ")]);
+        let bad_id = dir.path().join("bad.nupkg");
+        write_zip(
+            &bad_id,
+            &[(
+                "x.nuspec",
+                br#"<package><metadata><id>Bad Id</id><version>1.0.0</version></metadata></package>"#,
+            )],
+        );
+        let symbols = dir.path().join("Acme.Sdk.1.2.0.snupkg");
+        write_zip(
+            &symbols,
+            &[("Acme.Sdk.nuspec", fixture("Acme.Sdk.nuspec").as_bytes())],
+        );
+        let wrong_extension = dir.path().join("Acme.Sdk.zip");
+        std::fs::copy(nupkg(dir.path(), "tmp.nupkg"), &wrong_extension).unwrap();
+
+        for path in [
+            garbage,
+            no_nuspec,
+            bad_id,
+            symbols,
+            wrong_extension,
+            dir.path().join("missing.nupkg"),
+        ] {
+            assert!(
+                packager.package_archive(&options(&path, None)).is_err(),
+                "{}",
+                path.display()
+            );
+        }
+    }
+}

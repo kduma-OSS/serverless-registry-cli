@@ -413,3 +413,300 @@ fn real_cargo_reports_an_unknown_package() {
 
     assert!(invalid_input(&err, "no package `missing`"), "{err}");
 }
+
+mod archive_mode {
+    use std::fs::File;
+    use std::path::{Path, PathBuf};
+
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use serde_json::json;
+    use sreg_core::{ArchiveOptions, CommandOutput, CommandRunner, Error, Packager};
+    use sreg_eco_cargo::CargoPackager;
+
+    const OLD: &str = "sparse+https://old.example.com/cargo/index/";
+
+    const MANIFEST: &str = r#"
+[package]
+name = "licensing-kit-example"
+version = "1.2.3"
+edition = "2021"
+rust-version = "1.70"
+links = "licensing"
+
+[features]
+default = ["std"]
+std = []
+json = ["dep:serde_json"]
+tls = ["reqwest?/rustls"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }
+reqwest = { version = "0.12", optional = true, default-features = false }
+serde_json = { version = "1", optional = true }
+licensing-kit-core = { version = "^2.1", registry-index = "sparse+https://old.example.com/cargo/index/" }
+core-alias = { package = "licensing-kit-util", version = "0.4", registry-index = "sparse+https://old.example.com/cargo/index" }
+third = { version = "3", registry-index = "sparse+https://other.example.org/index/" }
+sparse-crates-io = { package = "itoa", version = "1", registry-index = "sparse+https://index.crates.io/" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+cc = { version = "1", default-features = false, features = ["parallel"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+unix-only = { version = "1", registry-index = "sparse+https://old.example.com/cargo/index/" }
+
+[target.x86_64-pc-windows-msvc.build-dependencies]
+winres = "0.1"
+"#;
+
+    /// Runner that fails the test when anything is run (no git, no cargo).
+    struct Unreachable;
+
+    impl CommandRunner for Unreachable {
+        fn run(&self, program: &str, _: &[&str], _: &Path) -> Result<CommandOutput, Error> {
+            panic!("archive mode must not run {program}");
+        }
+    }
+
+    fn write_crate(path: &Path, top: &str, manifest: Option<&str>) {
+        let mut builder = tar::Builder::new(GzEncoder::new(
+            File::create(path).unwrap(),
+            Compression::default(),
+        ));
+        let mut add = |name: String, data: &[u8]| {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, name, data).unwrap();
+        };
+        add(format!("{top}/src/lib.rs"), b"");
+        // `cargo package` keeps the original next to the normalised manifest.
+        add(
+            format!("{top}/Cargo.toml.orig"),
+            b"[package]\nname = \"orig\"\n",
+        );
+        if let Some(manifest) = manifest {
+            add(format!("{top}/Cargo.toml"), manifest.as_bytes());
+        }
+        builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    fn crate_file(dir: &Path) -> PathBuf {
+        let path = dir.join("licensing-kit-example-1.2.3.crate");
+        write_crate(&path, "licensing-kit-example-1.2.3", Some(MANIFEST));
+        path
+    }
+
+    fn options(path: &Path, version: Option<&str>) -> ArchiveOptions {
+        ArchiveOptions {
+            path: path.to_path_buf(),
+            version: version.map(str::to_owned),
+        }
+    }
+
+    fn dep(
+        name: &str,
+        req: &str,
+        kind: &str,
+        registry: Option<&str>,
+        package: Option<&str>,
+    ) -> serde_json::Value {
+        json!({
+            "name": name, "req": req, "features": [], "optional": false,
+            "default_features": true, "target": null, "kind": kind,
+            "registry": registry, "package": package
+        })
+    }
+
+    const CRATES_IO: &str = "https://github.com/rust-lang/crates.io-index";
+
+    #[test]
+    fn describes_the_crate_and_remaps_the_source_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate_file(dir.path());
+        let before = std::fs::read(&path).unwrap();
+
+        let package = CargoPackager::with_runner(Unreachable)
+            .source_registry_index(Some(OLD.to_owned()))
+            .package_archive(&options(&path, Some("1.2.3")))
+            .unwrap();
+
+        assert_eq!(package.name, "licensing-kit-example");
+        assert_eq!(package.version, "1.2.3");
+        assert_eq!(package.files[0].name, "licensing-kit-example-1.2.3.crate");
+        assert_eq!(package.files[0].path, path);
+        assert_eq!(package.files[0].role.as_deref(), Some("archive"));
+        assert_eq!(package.files[0].size, before.len() as u64);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(package.workdir.is_none());
+        assert!(package.notes.is_empty());
+
+        let manifest = &package.manifest;
+        assert_eq!(manifest["name"], "licensing-kit-example");
+        assert_eq!(manifest["vers"], "1.2.3");
+        assert_eq!(manifest["links"], "licensing");
+        assert_eq!(manifest["rust_version"], "1.70");
+        assert_eq!(
+            manifest["features"],
+            json!({ "default": ["std"], "std": [] })
+        );
+        assert_eq!(
+            manifest["features2"],
+            json!({ "json": ["dep:serde_json"], "tls": ["reqwest?/rustls"] })
+        );
+
+        let deps = manifest["deps"].as_array().unwrap();
+        let find = |name: &str, kind: &str| {
+            deps.iter()
+                .find(|dep| dep["name"] == name && dep["kind"] == kind)
+                .unwrap_or_else(|| panic!("{name} ({kind}) in {deps:?}"))
+        };
+        // Same-registry dependencies are `registry: null`, aliases survive.
+        let core = find("licensing-kit-core", "normal");
+        assert_eq!(core["registry"], json!(null));
+        assert_eq!(core["req"], "^2.1");
+        let alias = find("core-alias", "normal");
+        assert_eq!(alias["registry"], json!(null));
+        assert_eq!(alias["package"], "licensing-kit-util");
+        assert_eq!(find("unix-only", "normal")["registry"], json!(null));
+        assert_eq!(find("unix-only", "normal")["target"], "cfg(unix)");
+        // Other registries keep their identity; crates.io is crates.io however spelled.
+        assert_eq!(
+            find("third", "normal")["registry"],
+            "sparse+https://other.example.org/index/"
+        );
+        assert_eq!(find("sparse-crates-io", "normal")["registry"], CRATES_IO);
+        assert_eq!(find("sparse-crates-io", "normal")["package"], "itoa");
+        assert_eq!(find("tempfile", "dev")["registry"], CRATES_IO);
+        // Flags, kinds and targets.
+        let serde = find("serde", "normal");
+        assert_eq!(serde["features"], json!(["derive"]));
+        assert_eq!(serde["optional"], true);
+        assert_eq!(serde["default_features"], true);
+        assert_eq!(find("reqwest", "normal")["default_features"], false);
+        assert_eq!(
+            find("cc", "build"),
+            &json!({
+                "name": "cc", "req": "1", "features": ["parallel"], "optional": false,
+                "default_features": false, "target": null, "kind": "build",
+                "registry": CRATES_IO, "package": null
+            })
+        );
+        assert_eq!(
+            find("libc", "normal"),
+            &dep("libc", "0.2", "normal", Some(CRATES_IO), None)
+                .as_object()
+                .map(|o| {
+                    let mut o = o.clone();
+                    o.insert("target".into(), json!("cfg(unix)"));
+                    json!(o)
+                })
+                .unwrap()
+        );
+        assert_eq!(find("winres", "build")["target"], "x86_64-pc-windows-msvc");
+        assert_eq!(deps.len(), 12);
+    }
+
+    #[test]
+    fn without_the_option_every_registry_keeps_its_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate_file(dir.path());
+        let package = CargoPackager::with_runner(Unreachable)
+            .package_archive(&options(&path, None))
+            .unwrap();
+        let core = package.manifest["deps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|dep| dep["name"] == "licensing-kit-core")
+            .unwrap();
+        assert_eq!(core["registry"], OLD);
+    }
+
+    #[test]
+    fn an_index_that_matches_nothing_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate_file(dir.path());
+        let package = CargoPackager::with_runner(Unreachable)
+            .source_registry_index(Some("sparse+https://typo.example.com/".into()))
+            .package_archive(&options(&path, None))
+            .unwrap();
+        assert_eq!(package.notes.len(), 1);
+        assert!(
+            package.notes[0].contains("typo.example.com"),
+            "{:?}",
+            package.notes
+        );
+    }
+
+    #[test]
+    fn name_and_version_mismatches_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate_file(dir.path());
+        let packager = CargoPackager::with_runner(Unreachable);
+        let err = packager
+            .package_archive(&options(&path, Some("1.2.4")))
+            .unwrap_err();
+        assert!(err.to_string().contains("1.2.4"), "{err}");
+
+        let wrong_dir = dir.path().join("wrong-dir.crate");
+        write_crate(&wrong_dir, "something-else-9.9.9", Some(MANIFEST));
+        let err = packager
+            .package_archive(&options(&wrong_dir, None))
+            .unwrap_err();
+        assert!(err.to_string().contains("something-else-9.9.9"), "{err}");
+    }
+
+    #[test]
+    fn malformed_archives_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let packager = CargoPackager::with_runner(Unreachable);
+        let garbage = dir.path().join("garbage.crate");
+        std::fs::write(&garbage, b"not a crate").unwrap();
+        let none = dir.path().join("none.crate");
+        write_crate(&none, "a-1.0.0", None);
+        let toml = dir.path().join("toml.crate");
+        write_crate(&toml, "a-1.0.0", Some("[package"));
+        let no_version = dir.path().join("nover.crate");
+        write_crate(&no_version, "a-1.0.0", Some("[package]\nname = \"a\"\n"));
+        let inherited = dir.path().join("inherited.crate");
+        write_crate(
+            &inherited,
+            "a-1.0.0",
+            Some("[package]\nname = \"a\"\nversion.workspace = true\n"),
+        );
+        let named_registry = dir.path().join("named.crate");
+        write_crate(
+            &named_registry,
+            "a-1.0.0",
+            Some("[package]\nname = \"a\"\nversion = \"1.0.0\"\n[dependencies]\nb = { version = \"1\", registry = \"private\" }\n"),
+        );
+        let truncated = dir.path().join("truncated.crate");
+        let full = crate_file(dir.path());
+        let mut bytes = std::fs::read(full).unwrap();
+        bytes.truncate(bytes.len() - 10);
+        std::fs::write(&truncated, bytes).unwrap();
+
+        for path in [
+            garbage,
+            none,
+            toml,
+            no_version,
+            inherited,
+            named_registry,
+            truncated,
+            dir.path().join("missing.crate"),
+        ] {
+            assert!(
+                packager.package_archive(&options(&path, None)).is_err(),
+                "{}",
+                path.display()
+            );
+        }
+    }
+}

@@ -50,6 +50,10 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             command: ComposerCommand::Publish(args),
         } => {
             let packager = sreg_eco_composer::ComposerPackager::new();
+            if let Some(archive) = &args.archive {
+                return publish::run_archive(global, &out, &packager, &args.publish, archive, None)
+                    .await;
+            }
             publish::run_packager(
                 global,
                 &out,
@@ -66,6 +70,20 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             command: NpmCommand::Publish(args),
         } => {
             let packager = sreg_eco_npm::NpmPackager::new().workspace(args.workspace.clone());
+            if let Some(archive) = &args.archive {
+                if let Some(tag) = &args.tag {
+                    sreg_eco_npm::validate_tag(tag)?;
+                }
+                return publish::run_archive(
+                    global,
+                    &out,
+                    &packager,
+                    &args.publish,
+                    archive,
+                    args.tag.clone(),
+                )
+                .await;
+            }
             publish::run_packager(
                 global,
                 &out,
@@ -81,7 +99,13 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Cargo {
             command: CargoCommand::Publish(args),
         } => {
-            let packager = sreg_eco_cargo::CargoPackager::new().package_name(args.package.clone());
+            let packager = sreg_eco_cargo::CargoPackager::new()
+                .package_name(args.package.clone())
+                .source_registry_index(args.source_registry_index.clone());
+            if let Some(archive) = &args.archive {
+                return publish::run_archive(global, &out, &packager, &args.publish, archive, None)
+                    .await;
+            }
             publish::run_packager(
                 global,
                 &out,
@@ -142,6 +166,10 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             let packager = sreg_eco_nuget::NugetPackager::new()
                 .project(args.project.clone())
                 .symbols(!args.no_symbols);
+            if let Some(archive) = &args.archive {
+                return publish::run_archive(global, &out, &packager, &args.publish, archive, None)
+                    .await;
+            }
             publish::run_packager(
                 global,
                 &out,

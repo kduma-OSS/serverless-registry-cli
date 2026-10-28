@@ -368,3 +368,122 @@ fn real_npm_reports_an_unknown_workspace() {
         "{err:?}"
     );
 }
+
+mod archive_mode {
+    use sreg_core::ArchiveOptions;
+
+    use super::*;
+
+    fn archive_opts(path: &Path, version: Option<&str>) -> ArchiveOptions {
+        ArchiveOptions {
+            path: path.to_path_buf(),
+            version: version.map(str::to_owned),
+        }
+    }
+
+    fn manifest() -> Value {
+        json!({
+            "name": "@acme/demo", "version": "1.2.3",
+            "dependencies": { "left-pad": "^1.0.0" }, "_id": "dropped"
+        })
+    }
+
+    #[test]
+    fn describes_the_tarball_without_touching_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("package.tgz");
+        write_tarball(&path, Some(&manifest()));
+        let before = std::fs::read(&path).unwrap();
+
+        // A runner that panics proves that no tool (git, npm) is invoked.
+        let package = NpmPackager::with_runner(Unreachable)
+            .package_archive(&archive_opts(&path, Some("1.2.3")))
+            .unwrap();
+
+        assert_eq!(package.name, "@acme/demo");
+        assert_eq!(package.version, "1.2.3");
+        assert_eq!(
+            package.manifest,
+            json!({ "name": "@acme/demo", "version": "1.2.3",
+                    "dependencies": { "left-pad": "^1.0.0" } })
+        );
+        let file = &package.files[0];
+        assert_eq!(file.path, path);
+        assert_eq!(file.name, "acme-demo-1.2.3.tgz");
+        assert_eq!(file.role.as_deref(), Some("archive"));
+        assert_eq!(file.size, before.len() as u64);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(package.workdir.is_none());
+    }
+
+    #[test]
+    fn version_is_only_a_consistency_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("package.tgz");
+        write_tarball(&path, Some(&manifest()));
+        let err = NpmPackager::with_runner(Unreachable)
+            .package_archive(&archive_opts(&path, Some("1.2.4")))
+            .unwrap_err();
+        assert!(err.to_string().contains("1.2.3"), "{err}");
+        assert!(err.to_string().contains("1.2.4"), "{err}");
+    }
+
+    #[test]
+    fn malformed_archives_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let packager = NpmPackager::with_runner(Unreachable);
+
+        let no_manifest = dir.path().join("a.tgz");
+        write_tarball(&no_manifest, None);
+        let garbage = dir.path().join("b.tgz");
+        std::fs::write(&garbage, b"not a tarball").unwrap();
+        let unscoped = dir.path().join("c.tgz");
+        write_tarball(
+            &unscoped,
+            Some(&json!({ "name": "demo", "version": "1.0.0" })),
+        );
+        let no_version = dir.path().join("d.tgz");
+        write_tarball(&no_version, Some(&json!({ "name": "@acme/demo" })));
+        let bad_version = dir.path().join("e.tgz");
+        write_tarball(
+            &bad_version,
+            Some(&json!({ "name": "@acme/demo", "version": "one" })),
+        );
+        let truncated = dir.path().join("f.tgz");
+        let mut bytes = Vec::new();
+        {
+            let full = dir.path().join("full.tgz");
+            write_tarball(&full, Some(&manifest()));
+            bytes.extend(std::fs::read(&full).unwrap());
+        }
+        bytes.truncate(bytes.len() - 12);
+        std::fs::write(&truncated, bytes).unwrap();
+
+        for path in [
+            no_manifest,
+            garbage,
+            unscoped,
+            no_version,
+            bad_version,
+            truncated,
+            dir.path().join("missing.tgz"),
+        ] {
+            assert!(
+                packager
+                    .package_archive(&archive_opts(&path, None))
+                    .is_err(),
+                "{}",
+                path.display()
+            );
+        }
+    }
+
+    /// A runner that fails the test when anything is run.
+    struct Unreachable;
+
+    impl CommandRunner for Unreachable {
+        fn run(&self, program: &str, _: &[&str], _: &Path) -> Result<CommandOutput, Error> {
+            panic!("archive mode must not run {program}");
+        }
+    }
+}

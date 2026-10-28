@@ -15,8 +15,8 @@ use std::path::Path;
 use serde_json::Value;
 use sreg_core::git::Git;
 use sreg_core::{
-    CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions, Packager, SystemRunner,
-    Workdir,
+    ArchiveOptions, CommandRunner, Ecosystem, Error, Package, PackageFile, PackageOptions,
+    Packager, SystemRunner, Workdir,
 };
 
 pub use validate::{validate_name, validate_tag, validate_version};
@@ -84,6 +84,10 @@ impl<R: CommandRunner> NpmPackager<R> {
 impl<R: CommandRunner> Packager for NpmPackager<R> {
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Npm
+    }
+
+    fn package_archive(&self, opts: &ArchiveOptions) -> Result<Package, Error> {
+        self.package_tarball(opts)
     }
 
     /// Packs the project in `opts.path` (the root of the npm project or of the
@@ -188,6 +192,46 @@ impl<R: CommandRunner> Packager for NpmPackager<R> {
     }
 }
 
+impl<R: CommandRunner> NpmPackager<R> {
+    fn package_tarball(&self, opts: &ArchiveOptions) -> Result<Package, Error> {
+        if self.workspace.is_some() {
+            return Err(Error::InvalidInput(
+                "--workspace selects a project to pack and cannot be combined with --archive"
+                    .into(),
+            ));
+        }
+        let manifest = tarball::read_package_json(&opts.path)?;
+        let (name, version) = manifest_identity(&manifest)?;
+        validate_name(&name)?;
+        validate_version(&version)?;
+        if let Some(requested) = &opts.version {
+            if requested != &version {
+                return Err(Error::InvalidInput(format!(
+                    "the tarball contains {name}@{version}, but --version {requested} was given"
+                )));
+            }
+        }
+        let file = PackageFile::archive(&opts.path, archive_name(&name, &version))?;
+        Ok(Package {
+            eco: Ecosystem::Npm,
+            name,
+            version,
+            files: vec![file],
+            manifest: strip_private_fields(manifest),
+            workdir: None,
+            notes: Vec::new(),
+        })
+    }
+}
+
+/// The file name `npm pack` gives a tarball: `@acme/demo` 1.2.3 → `acme-demo-1.2.3.tgz`.
+fn archive_name(name: &str, version: &str) -> String {
+    format!(
+        "{}-{version}.tgz",
+        name.trim_start_matches('@').replace('/', "-")
+    )
+}
+
 /// Rejects the flags `sreg` sets itself, in both the `--flag value` and the
 /// `--flag=value` form.
 fn check_extra_args(args: &[String]) -> Result<(), Error> {
@@ -257,6 +301,15 @@ mod tests {
             assert!(err.to_string().contains("cannot be passed"), "{arg}: {err}");
         }
         assert!(check_extra_args(&["--ignore-scripts".to_owned(), "--dry".to_owned()]).is_ok());
+    }
+
+    #[test]
+    fn archive_names_follow_npm_pack() {
+        assert_eq!(archive_name("@acme/demo", "1.2.3"), "acme-demo-1.2.3.tgz");
+        assert_eq!(
+            archive_name("@a/b.js", "2.0.0-rc.1"),
+            "a-b.js-2.0.0-rc.1.tgz"
+        );
     }
 
     #[test]
