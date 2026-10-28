@@ -277,7 +277,8 @@ Every non-2xx response has this body:
 
 `error` is stable and meant for programs; `message` is for humans and may change. Messages
 never contain secrets (tokens, hashes, presigned URLs). Clients must treat an unknown `error`
-value according to its HTTP status.
+value according to its HTTP status. A few codes add fields after these two (`ambiguous`,
+8.7); clients ignore fields they do not know.
 
 | Code                   | Status | Meaning                                                                                                                      |
 | ---------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -291,6 +292,7 @@ value according to its HTTP status.
 | `file_exists`          | 409    | `append` with a file name that already exists in the version.                                                                |
 | `upload_mismatch`      | 409    | On `commit`: the size or SHA-256 of a staged file differs from the `init` declaration.                                       |
 | `credential_exists`    | 409    | `POST /api/v1/credentials` for a project that already exists.                                                                |
+| `ambiguous`            | 409    | Generic label-selected download (8.7): more than one file matches; the body also lists `version` and the candidate `files`.  |
 | `payload_too_large`    | 413    | Request body over 4 MiB, or the `size` of a file in `init` above `MAX_UPLOAD_BYTES`.                                         |
 | `client_too_old`       | 426    | `X-Client-Version` is lower than `X-Min-Client-Version`.                                                                     |
 | `rate_limited`         | 429    | Reserved; not emitted in `v1`. If received, wait for `Retry-After` seconds (default 10) and retry.                           |
@@ -1496,20 +1498,26 @@ Every publish follows these steps:
 
 ### 7.4 Downloading generic files
 
-`sreg generic get <name> [<version>|latest] [--label k=v]... [--out <dir>] [--prerelease]`:
+`sreg generic get <name> [<version>|<range>|latest] [--label k=v]... [--sole] [--out <dir>] [--prerelease]`:
 
-1. `GET /generic/<name>/<version>`, or `GET /generic/<name>/latest` (the default, with
-   `?channel=prerelease` for `--prerelease`), with one `?label=k:v` per `--label` (8.4, 8.5).
-   With `--json`, print this response and stop.
-2. For every entry in `files`, `GET` its `url` with the `Authorization` header and without
+1. `GET /generic/<name>/<version>` for an exact version, or `GET /generic/<name>/latest` (the
+   default, with `?channel=prerelease` for `--prerelease`), with one `?label=k:v` per
+   `--label` (8.4, 8.5). Any other second argument is a version constraint in npm syntax
+   (`^1.2`, `~1.4`, `>=1 <2`): it is sent as `GET /generic/<name>/latest?version=<range>`, so
+   the highest version satisfying it is downloaded. With `--json`, print this response and
+   stop.
+2. With `--sole`, exactly one file must remain after the label filter: none, or several, is
+   an error that lists the candidates and downloads nothing (the same check that 8.7 makes on
+   the server with `409 ambiguous`).
+3. For every entry in `files`, `GET` its `url` with the `Authorization` header and without
    following redirects automatically. The answer is `302`; follow it manually with a `GET` of
    the `Location` URL that carries **no** `Authorization` header (and no other credential): the
    presigned URL authorises itself, the token must not reach the storage host, and R2 rejects
    a request that combines both. If the presigned `GET` answers `403` because it expired,
    request the `302` endpoint again (once per file).
-3. Verify the size and SHA-256 of every downloaded file against the feed entry; on a mismatch,
+4. Verify the size and SHA-256 of every downloaded file against the feed entry; on a mismatch,
    delete the file and fail.
-4. Write the files into `--out` (default: the current directory) under their `name` and print
+5. Write the files into `--out` (default: the current directory) under their `name` and print
    the paths.
 
 ### 7.5 Other retries
@@ -1543,14 +1551,27 @@ do not apply. It exists only while `generic` is enabled in `ECOSYSTEMS`; otherwi
   for the package gets `404 not_found`, as in section 4.
 - **Methods**: only `GET`; any other method answers `404 not_found`. `/generic` is the same as
   `/generic/`.
+- **Endpoints**:
+
+  | Path                                          | Answer                                                     | Section |
+  | --------------------------------------------- | ---------------------------------------------------------- | ------- |
+  | `/generic/`                                   | the packages the credential can see                        | 8.2     |
+  | `/generic/<name>[?version=<range>]`           | every version (or those satisfying the range) and `latest` | 8.3     |
+  | `/generic/<name>/latest[?version=<range>]`    | the highest qualifying version                             | 8.4     |
+  | `/generic/<name>/<version>`                   | one version                                                | 8.5     |
+  | `/generic/<name>/<version>/<file>`            | `302` to the file                                          | 8.6     |
+  | `/generic/<name>/<version>/-/download?label=` | `302` to the one file of the version the labels select     | 8.7     |
+  | `/generic/<name>/latest/-/download?label=`    | `302` to the one file the labels select in the 8.4 version | 8.7     |
+
 - **Paths**: `<name>` is one path segment; the `/` of a grouped name is sent as `%2F`
   (`acme%2Fplugin-foo`), and the Worker matches on the raw path as in 1.3. A literal `/` would
   be ambiguous (`/generic/acme/latest`). `<version>` is the exact version, `<file>` the exact
-  file name, both percent-encoded.
+  file name, both percent-encoded. The `-/download` suffix of 8.7 cannot collide with a file
+  named `-`: its path has one segment more than 8.6.
 - **Responses**: JSON in UTF-8 (`Content-Type: application/json; charset=utf-8`), and
   `Cache-Control: private, no-store` on every response, like every native protocol. Errors use
   the body of section 4 (`invalid_request`, `unauthorized`, `forbidden`, `not_found`,
-  `internal_error`, `provider_unavailable`).
+  `ambiguous` (8.7 only), `internal_error`, `provider_unavailable`).
 - **ETag**: every `200` JSON response carries a strong `ETag`: a quoted prefix of the hex
   SHA-256 of the body (clients treat it as opaque). A request whose `If-None-Match` contains
   that value (or `*`) gets `304 Not Modified` with the `ETag` and no body. The body depends on
@@ -1564,8 +1585,18 @@ do not apply. It exists only while `generic` is enabled in `ECOSYSTEMS`; otherwi
     key format of 6.4, otherwise `400 invalid_request`. A file matches when it has every
     requested label with exactly the requested value. Labels filter only the files: a version
     without a matching file is still listed, with an empty `files` array.
-  - `include=yanked`: also return yanked versions.
-  - `channel=prerelease` (8.4 only): also consider prerelease versions.
+  - `include=yanked`: also return yanked versions (8.3, 8.5, and 8.7 with an explicit
+    version).
+  - `channel=prerelease` (8.4 and `latest` in 8.7 only): also consider prerelease versions.
+  - `version=<range>` (8.3, 8.4 and `latest` in 8.7): a version constraint in npm
+    (node-semver) syntax, e.g. `^1.2`, `~1.4.0`, `>=1.2 <2`, `1.x || >=3`, sent
+    percent-encoded. Only versions satisfying it qualify. A prerelease satisfies it only when
+    a comparator of the range names the same `major.minor.patch` with a prerelease
+    (`>=2.0.0-beta.0` admits `2.0.0-beta.1`, `^2` does not), the npm rule that grant
+    constraints follow too. With `channel=prerelease`, a prerelease also qualifies when its release version satisfies the range (`^2` admits
+    `2.0.0-beta.1` because `2.0.0` satisfies it, `^1` does not). A range that does not parse,
+    an empty value or the parameter given twice is `400 invalid_request`. Elsewhere it is
+    validated the same way but has no effect.
   - Any other value of `include` or `channel` is `400 invalid_request`; unknown parameters
     are ignored.
 - **Versions** are compared by semver precedence. `latest` is the highest non-yanked stable
@@ -1594,6 +1625,12 @@ included), sorted by name:
 All versions of a package covered by the grants, highest first (clients must not rely on the
 order of object keys); yanked versions only with `?include=yanked`. `?label=` filters the files
 of every version. `latest` is not affected by `?label=` or `?include=`.
+
+With `?version=<range>`, `versions` holds only the versions satisfying the range (a
+prerelease only when the range pins it; `channel` has no effect here), and `latest` is the
+highest non-yanked one of them, which is what 8.4 answers for the same range without
+`channel`, or `null` when there is none. A range that matches nothing answers `200` with an
+empty `versions` object.
 
 ```json
 {
@@ -1624,8 +1661,11 @@ the grants.
 ### 8.4 `GET /generic/<name>/latest`
 
 The highest non-yanked stable version covered by the grants; with `?channel=prerelease`,
-prerelease versions are considered too. `?label=` filters its files as above. Response `200`
-in the single-version shape:
+prerelease versions are considered too. With `?version=<range>`, the highest non-yanked
+version covered by the grants that satisfies the range, prereleases as described in 8.1
+(`latest?version=%5E1` is the newest `1.x`). `?label=` filters its files as above but does not
+take part in choosing the version: a version without a matching file is answered with an
+empty `files` array. Response `200` in the single-version shape:
 
 ```json
 {
@@ -1646,7 +1686,8 @@ in the single-version shape:
 }
 ```
 
-Errors: `404 not_found` when no version qualifies.
+Errors: `400 invalid_request` for an invalid `version` range; `404 not_found` when no version
+qualifies.
 
 ### 8.5 `GET /generic/<name>/<version>`
 
@@ -1660,6 +1701,44 @@ not given.
 no body. Files of yanked versions stay downloadable. Errors: `404 not_found` when the version
 is not covered by the grants or the file does not exist. Clients follow the redirect without
 the `Authorization` header (7.4).
+
+### 8.7 `GET /generic/<name>/<version|latest>/-/download`
+
+Downloads the one file that the labels select, for clients that know the platform they need
+but not the file name, in a single request:
+
+```
+GET /generic/acme%2Fplugin-foo/latest/-/download?version=%5E1&label=platform:x86_64-unknown-linux-gnu
+```
+
+1. The version: the exact `<version>` (yanked only with `?include=yanked`, like 8.5), or for
+   `latest` the version 8.4 answers for the same `?version=` and `?channel=` (never a yanked
+   one). The grants are checked for the resolved version as for any download.
+2. The files of that version that carry every `?label=` (`label` is repeatable; without it,
+   every file of the version is a candidate).
+3. Exactly one file: `302 Found` with `Location` set to a presigned `GET` URL of it, valid for
+   15 minutes, as in 8.6, plus `X-Resolved-Version: <version>` and
+   `X-Resolved-File: <file name>`, so that the client learns what it got (e.g. to verify it
+   against the feed or to name the downloaded file).
+
+Errors: `400 invalid_request` for an invalid `label` or `version`; `404 not_found` when the
+version does not exist, is not covered by the grants, is yanked (without `?include=yanked`
+for an explicit version), no version qualifies for `latest`, or no file carries the labels;
+`409 ambiguous` when more than one file does, with the resolved version and the names of the
+candidates, sorted, so that the client can add a label:
+
+```json
+{
+  "error": "ambiguous",
+  "message": "3 files of acme/plugin-foo 1.4.0 match; add labels to select one.",
+  "version": "1.4.0",
+  "files": [
+    "plugin_foo-aarch64-apple-darwin.dylib",
+    "plugin_foo-x86_64-pc-windows-msvc.dll",
+    "plugin_foo-x86_64-unknown-linux-gnu.so"
+  ]
+}
+```
 
 ## 9. NuGet feed (`/nuget/…`)
 
