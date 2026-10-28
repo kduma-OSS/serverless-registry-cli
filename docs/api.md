@@ -228,6 +228,7 @@ interface Grant {
   eco: Eco;
   package: string; // exact name or a pattern with a trailing "*" (see 5.1)
   versions: string; // version constraint in the ecosystem's syntax, "*" = all
+  transitive?: boolean; // default true; only meaningful for kind "read" (see 5.3)
 }
 
 interface KeyAuthEntry {
@@ -287,6 +288,13 @@ interface Package {
   eco: Eco;
   name: string; // decoded, e.g. "@acme/sdk"
   versions: PackageVersion[]; // sorted by version precedence, highest first
+  dependencies?: PackageDependency[]; // kind "read" only, see 6.6
+}
+
+interface PackageDependency {
+  name: string; // a package this grant opens transitively (5.3)
+  constraints: string[]; // the declared constraints that lead to it, distinct, as written
+  versions: string[]; // the concrete versions opened, highest first
 }
 ```
 
@@ -311,12 +319,19 @@ the generic feed (section 8) are derived from it. Clients must treat an absent `
   `[1.0,2.0)`, `1.0` (= `>=1.0`), `[1.0]`, `(,1.0]`, floating `1.*`), or `*` for all versions.
   The ecosystem's adapter evaluates it. A constraint that does not parse is
   `400 invalid_request`.
+- `transitive` (optional boolean, default `true`): for `read`, the grant also opens the
+  package's dependencies in this registry (5.3). It is accepted on input for every kind,
+  ignored for `publish` (publishing always needs an explicit grant) and meaningless for
+  `admin`, which has no grants. The Worker stores it explicitly (`true` when it was absent)
+  and always returns it, in the credentials API as well as in `whoami`.
 - A credential without a grant for an ecosystem has no access to it. For `read` a grant means
   "may install", for `publish` "may publish".
 
-Shorthand: `eco:package[:versions]`, split at the first two `:`; `versions` defaults to `*`.
-Examples: `composer:acme/*:*`, `npm:@acme/sdk:^2.0`, `cargo:acme-core:>=1.4, <2`,
-`generic:acme/*:^1.0`, `nuget:Acme.*:[1.0,2.0)`.
+Shorthand: `eco:package[:versions[:transitive]]`, split at the first two `:`; `versions`
+defaults to `*`. When the rest after the second `:` ends with `:true` or `:false`, that suffix
+is `transitive`, otherwise `transitive` defaults to `true`. Examples: `composer:acme/*:*`,
+`npm:@acme/sdk:^2.0:false`, `cargo:acme-core:>=1.4, <2`, `generic:acme/*:^1.0`,
+`nuget:Acme.*:[1.0,2.0)`.
 
 ### 5.2 Versions
 
@@ -339,6 +354,45 @@ kernel:
 
 Versions are compared as exact strings for immutability (for nuget, the normalised strings, so
 `1.2` and `1.2.0` are the same version).
+
+### 5.3 Transitive access
+
+A `read` grant with `transitive: true` also allows the versions of other packages that its
+packages depend on, as long as they are in this registry:
+
+- The Worker computes the closure from the dependency **constraints** declared in the
+  manifests (`native`): starting from the versions covered by the credential's transitive
+  grants, it takes their dependencies on packages of the same ecosystem that exist in this
+  registry, allows the versions that satisfy the constraint (evaluated by that ecosystem's
+  adapter), and repeats for those versions until nothing new is added. Example: A `1.x`
+  declaring `"B": "^1.1"` opens B 1.1.0 and 1.4.0 but not B 2.0.0; once A 1.5.0 declares
+  `"B": "^2.0"`, B 2.x is opened too.
+- Yanked versions take part like any other version, so lockfiles that pin a yanked version
+  and its dependencies keep working (6.8).
+- Optional, dev and peer dependencies count like normal ones. A constraint the adapter cannot
+  evaluate (for example an npm `file:`, `git+…` or `workspace:` specifier, or an alias) opens
+  nothing. Generic packages have no dependencies.
+- The dependencies come from the adapter's `dependencies(m: Manifest)`, which returns
+  `{ name, constraint }` pairs:
+
+  | Eco        | Dependencies taken from the manifest                                                                                                      |
+  | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+  | `composer` | `require` and `require-dev` entries whose key looks like `vendor/package`; `php`, `ext-*`, `lib-*` and `composer-plugin-api` are excluded |
+  | `npm`      | `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies`                                                          |
+  | `cargo`    | `deps[]` entries whose `registry` is `null` (this registry); the name is `package ?? name`, the constraint is `req`                       |
+  | `nuget`    | every `dependencyGroups[].dependencies[]` entry, with its `range` (ids compared case-insensitively)                                       |
+  | `generic`  | none                                                                                                                                      |
+
+- Transitive access is not a grant on the dependency: it does not widen the explicit grants,
+  and a consumer that wants the dependency directly, with its own wider constraint, needs an
+  explicit grant. Publishing always requires an explicit `publish` grant.
+- The native read protocols (composer, npm, cargo, NuGet) serve transitively allowed versions
+  exactly like explicitly granted ones. The `/api/v1` package listings show them separately
+  (6.6).
+- The closure is cached in KV under `closure:<project>:<eco>` for 60 seconds. Every publish,
+  yank and delete in an ecosystem drops the cached closures of that ecosystem, and changing a
+  credential's grants drops that credential's closures. KV propagation can still delay a
+  change by up to about 60 seconds.
 
 ## 6. Endpoints
 
@@ -394,12 +448,12 @@ Any kind. Response `200`:
 {
   "project": "shop-frontend",
   "kind": "read",
-  "grants": [{ "eco": "npm", "package": "@acme/sdk", "versions": "^2.0" }]
+  "grants": [{ "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": true }]
 }
 ```
 
 `project` is `[<source>.]<project>` (e.g. `okta.shop-frontend` for a provider-backed
-credential). `grants` is `[]` for `admin`.
+credential). `grants` are returned as stored, with `transitive`; they are `[]` for `admin`.
 
 ### 6.4 `POST /api/v1/publish/init`
 
@@ -728,10 +782,15 @@ to `commit` can therefore simply retry it.
 
 ### 6.6 `GET /api/v1/packages`
 
-Kind `read` or `admin`. Lists packages with their versions. For `read`, only versions covered
-by the credential's grants are listed and packages with no such version are omitted; for
-`admin`, everything is listed. Yanked versions are included and marked. Ecosystems disabled in
-`ECOSYSTEMS` are omitted.
+Kind `read` or `admin`. Lists packages with their versions. For `read`, the top-level entries
+are the packages of the credential's explicit grants with the versions those grants cover;
+packages with no such version are omitted. Packages reachable only transitively (5.3) are not
+top-level entries: instead every `read` entry carries `dependencies`, the packages and
+concrete versions that its grant opens transitively, direct and indirect, flattened per source
+package and sorted by name (`[]` when the grant has `transitive: false` or opens nothing). A
+package that is also granted explicitly still appears in another entry's `dependencies` when
+that entry opens it. For `admin`, everything is listed and there is no `dependencies` field.
+Yanked versions are included and marked. Ecosystems disabled in `ECOSYSTEMS` are omitted.
 
 Response `200`:
 
@@ -776,11 +835,31 @@ Response `200`:
 ```
 
 Packages are sorted by `eco` and then `name` (byte order); versions by precedence, highest
-first. For nuget, `name` is the id with the casing of its highest version's manifest.
+first. The example above is an `admin` response; a `read` entry looks like this:
+
+````json
+{
+  "eco": "npm",
+  "name": "@acme/sdk",
+  "versions": [
+    {
+      "version": "2.3.1",
+      "published": "2026-10-28T10:12:00Z",
+      "yanked": false,
+      "files": [{ "name": "sdk-2.3.1.tgz", "size": 48213, "sha256": "9f2c…", "role": "archive" }]
+    }
+  ],
+  "dependencies": [
+    { "name": "@acme/http", "constraints": ["^1.1"], "versions": ["1.4.0", "1.1.0"] },
+    { "name": "@acme/log", "constraints": ["~0.3.0", "^0.3.2"], "versions": ["0.3.5", "0.3.2"] }
+  ]
+}
+``` For nuget, `name` is the id with the casing of its highest version's manifest.
 
 ### 6.7 `GET /api/v1/packages/<eco>/<name>`
 
-Kind `read` or `admin`. Response `200`: one `Package` object (same filtering as 6.6), e.g.
+Kind `read` or `admin`. Response `200`: one `Package` object (same filtering and
+`dependencies` as 6.6), e.g.
 `GET /api/v1/packages/npm/%40acme%2Fsdk`:
 
 ```json
@@ -796,10 +875,11 @@ Kind `read` or `admin`. Response `200`: one `Package` object (same filtering as 
     }
   ]
 }
-```
+````
 
 Errors: `404 not_found` when the package does not exist or, for `read`, when no version of it
-is covered by the grants.
+is covered by an explicit grant (a package reachable only transitively is listed under the
+`dependencies` of its source package instead).
 
 ### 6.8 `POST /api/v1/packages/<eco>/<name>/<version>/yank`
 
@@ -902,9 +982,9 @@ Response `200`:
         }
       ],
       "grants": [
-        { "eco": "composer", "package": "acme/*", "versions": "*" },
-        { "eco": "npm", "package": "@acme/sdk", "versions": "^2.0" },
-        { "eco": "cargo", "package": "acme-core", "versions": ">=1.4, <2" }
+        { "eco": "composer", "package": "acme/*", "versions": "*", "transitive": true },
+        { "eco": "npm", "package": "@acme/sdk", "versions": "^2.0", "transitive": false },
+        { "eco": "cargo", "package": "acme-core", "versions": ">=1.4, <2", "transitive": true }
       ]
     }
   ]
@@ -944,7 +1024,7 @@ Response `201`:
     "auth": [
       { "id": "3f9a1c0b7d2e", "type": "key", "created": "2026-10-28T09:00:00Z", "expires": null }
     ],
-    "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*" }]
+    "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*", "transitive": true }]
   },
   "token": "shop-frontend:k7Qx2mN9pLw4vR8sT1bYc3dF6hJ0aZ5e"
 }
@@ -1056,26 +1136,70 @@ Errors: `400 invalid_request` (ambiguous prefix), `404 not_found`.
 ### 7.1 Configuration
 
 The CLI reads the base URL from `--registry` or `REGISTRY_URL` and the token from `--token`
-or `REGISTRY_TOKEN` (or, with `--oidc`, builds `<project>:gh.<jwt>` from a GitHub Actions
-OIDC token requested with audience `PUBLIC_URL`). It sends `Authorization: Bearer <token>`,
+or `REGISTRY_TOKEN`. With `--oidc`, it builds `<project>:gh.<jwt>` from a GitHub Actions OIDC
+token requested with audience `PUBLIC_URL`. `sreg auth` takes the project as `--project <p>`
+(see the spec); the publish commands take it as `--oidc-project <p>`, because
+`sreg nuget publish` already uses `--project` for the `.csproj`, and the same name is used on
+every publish command for consistency. It sends `Authorization: Bearer <token>`,
 `X-Client-Version` and `Accept: application/json` on every API request, and
 `Authorization: Bearer <token>` on every request to the Worker's generic feed.
 
-### 7.2 Publishing sequence
+### 7.2 Publish commands and packaging
 
-The publish commands build the request as follows:
+`sreg` never calls the native tools' `publish`; it runs their packing commands, reads the
+result and uploads it itself. Flags that `sreg` sets are reserved; everything after `--` is
+passed verbatim to the packing tool (`sreg cargo publish --version 1.2.0 -- --features ssl --locked`).
 
-- `sreg composer publish`, `sreg npm publish`, `sreg cargo publish`: one file with
-  `role: "archive"` and the ecosystem-native `manifest` (6.4).
-- `sreg nuget publish [--version <v>] [--path .]`: runs `dotnet pack` (with
-  `-p:PackageVersion=<v>` when `--version` is given), unpacks the `.nupkg` (a zip), reads the
-  `.nuspec` into `manifest` (6.4) and sends the `.nupkg` as `archive`, plus the `.snupkg` as
-  `symbols` when `dotnet pack` produced one.
-- `sreg generic publish`: the given files with their `labels` and the `meta` as `manifest`. It
-  sends `append: true` by default, so that every job of a CI matrix can add its files to the
-  same version (6.4.1); `--no-append` sends `append: false` to require a fresh version.
+| Command                                                                                                               | Packing command                                                                                      | Flags set by `sreg`                                                                 | Passed after `--` (examples)                    |
+| --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `sreg composer publish [--version <v> \| --tag-prefix <p>] [--path <dir>]`                                            | `git archive --format=zip HEAD:<path>` (fallback: a zip of the directory without `vendor/`, `.git/`) | –                                                                                   | –                                               |
+| `sreg npm publish [--version <v> \| --tag-prefix <p>] [--tag <t>] [--workspace <w>] [-- …]`                           | `npm pack`                                                                                           | `--json`, `--pack-destination <tmp>`, `-w <pkg>` from `--workspace`                 | `--ignore-scripts`                              |
+| `sreg cargo publish [--version <v> \| --tag-prefix <p>] [--package <crate>] [-- …]`                                   | `cargo package`                                                                                      | `--no-verify`, `--allow-dirty`, `-p <crate>` from `--package`, `--target-dir <tmp>` | `--features`, `--locked`, `--manifest-path`     |
+| `sreg nuget publish [--version <v> \| --tag-prefix <p>] [--project <csproj>] [--no-symbols] [-- …]`                   | `dotnet pack <project>`                                                                              | `-o <tmp>`, `-p:PackageVersion=<v>` from `--version`                                | `-c Release`, `--no-build`, `--include-symbols` |
+| `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... \| --spec files.json [--no-append]` | none – the files are ready                                                                           | –                                                                                   | –                                               |
 
-Every publish then follows these steps:
+What each command sends to `init` (6.4):
+
+- composer, npm, cargo: one file with `role: "archive"` and the ecosystem-native `manifest`.
+  With `--version`, npm first runs `npm pkg set version=<v>` (with `-w` for a workspace) and
+  cargo rewrites `package.version` in the crate's `Cargo.toml`, so that the version inside the
+  archive matches the registry; the CLI prints that the file was modified.
+- nuget: unpacks the `.nupkg` (a zip), reads the `.nuspec` into `manifest` and sends the
+  `.nupkg` as `archive`, plus the `.snupkg` as `symbols` when `dotnet pack` produced one,
+  unless `--no-symbols` is given.
+- generic: the given files with their `labels` and the `meta` as `manifest`. It sends
+  `append: true` by default, so that every job of a CI matrix can add its files to the same
+  version (6.4.1); `--no-append` sends `append: false` to require a fresh version.
+
+Monorepos – every publish command points at one package within the repository and works from
+any working directory:
+
+- composer: `--path packages/foo` → `git archive HEAD:packages/foo`; the subdirectory becomes
+  the root of the archive, `export-ignore` in `.gitattributes` is honoured in subdirectories
+  too, and `composer.json` is read from that path.
+- npm: `--workspace <name|path>` → `npm pack -w <…>`.
+- cargo: `--package <crate>` → `cargo package -p <crate>`. With `version.workspace = true` in
+  the crate, `--version` is refused; the version must be set in the workspace.
+- nuget: `--project <path to .csproj>`; a `.sln` is refused because it produces several
+  packages.
+- Version: `--version <v>`, or a git tag on `HEAD`. With `--tag-prefix <p>` (e.g. `foo/v`,
+  `foo-v`) the CLI takes the tag on `HEAD` with that prefix; without `--tag-prefix` and
+  `--version` it accepts only a `v<semver>` tag and refuses when `HEAD` has more than one.
+- One call publishes one package in one version; several packages are several calls (a loop
+  or a matrix).
+
+Common flags of every publish command:
+
+- `--dry-run`: stop after `init` (7.3).
+- `--skip-existing`: treat `409 version_exists` and `409 file_exists` from `init` or `commit`
+  as success: exit code `0` and a message instead of an error; with `--json` the output is
+  `{ "skipped": true, "eco": "…", "name": "…", "version": "…" }`. This makes re-running a
+  workflow idempotent.
+- `--oidc` and `--oidc-project <p>` (7.1), `--json`.
+
+### 7.3 Publishing sequence
+
+Every publish follows these steps:
 
 1. Compute `size` and `sha256` of every file and build `manifest`.
 2. `POST /api/v1/publish/init`. Stop here with `--dry-run`.
@@ -1093,7 +1217,7 @@ Every publish then follows these steps:
    start again from `init` once.
 5. Print the result (`--json` prints the `201` body).
 
-### 7.3 Downloading generic files
+### 7.4 Downloading generic files
 
 `sreg generic get <name> [<version>|latest] [--label k=v]... [--out <dir>] [--prerelease]`:
 
@@ -1111,20 +1235,20 @@ Every publish then follows these steps:
 4. Write the files into `--out` (default: the current directory) under their `name` and print
    the paths.
 
-### 7.4 Other retries
+### 7.5 Other retries
 
 `GET` requests, including the generic feed, may be retried on network errors, `5xx` and `429`
 (honouring `Retry-After`). Clients do not retry non-idempotent admin calls
 (`POST /api/v1/credentials`, `POST …/secrets`) automatically.
 
-### 7.5 Exit codes
+### 7.6 Exit codes
 
-| Code | When                                                                                                                                                                |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | success                                                                                                                                                             |
-| 1    | any error not listed below                                                                                                                                          |
-| 2    | already published: `409 version_exists` or `409 file_exists` from `init` or `commit` (the pipeline can treat it as a no-op; a re-run matrix job gets `file_exists`) |
-| 3    | `426 client_too_old` (the CLI prints the minimum version and a link to the release)                                                                                 |
+| Code | When                                                                                                                                                                                           |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | success, or an already published version with `--skip-existing`                                                                                                                                |
+| 1    | any error not listed below                                                                                                                                                                     |
+| 2    | already published, without `--skip-existing`: `409 version_exists` or `409 file_exists` from `init` or `commit` (the pipeline can treat it as a no-op; a re-run matrix job gets `file_exists`) |
+| 3    | `426 client_too_old` (the CLI prints the minimum version and a link to the release)                                                                                                            |
 
 ## 8. Generic feed (`/generic/…`)
 
@@ -1257,7 +1381,7 @@ not given.
 `302 Found` with `Location` set to a presigned `GET` URL of the file, valid for 15 minutes, and
 no body. Files of yanked versions stay downloadable. Errors: `404 not_found` when the version
 is not covered by the grants or the file does not exist. Clients follow the redirect without
-the `Authorization` header (7.3).
+the `Authorization` header (7.4).
 
 ## 9. NuGet feed (`/nuget/…`)
 
@@ -1269,8 +1393,8 @@ otherwise every `/nuget/…` path answers `404 not_found`.
 
 - **Authentication**: any form of 2.2. NuGet clients send Basic credentials from
   `packageSourceCredentials` in `nuget.config` (user name = the token's login, password = the
-  token's password); Bearer works too. Kind `read` sees only the versions covered by its
-  `nuget` grants, kind `admin` sees everything, kind `publish` gets `403 forbidden`. A missing
+  token's password); Bearer works too. Kind `read` sees only the versions allowed by its
+  `nuget` grants, including transitive access (5.3), kind `admin` sees everything, kind `publish` gets `403 forbidden`. A missing
   or invalid credential gets `401 unauthorized` with both
   `WWW-Authenticate: Basic realm="serverless-registry"` and
   `WWW-Authenticate: Bearer realm="serverless-registry"`, so that `dotnet` prompts for
