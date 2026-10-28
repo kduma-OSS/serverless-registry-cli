@@ -184,7 +184,7 @@ skipped), in two ways:
      -f sreg-version=v<version> -f bump=patch -f only-if-newer-sreg=true
    ```
 
-   When the App is not configured (e.g. in a fork) it prints a notice and succeeds;
+   When the two secrets are missing (e.g. in a fork) it prints a notice and succeeds;
    when minting the token or the dispatch fails it prints a warning and still succeeds,
    since the release itself is already published.
 2. **Hourly sync (fallback, no token).** The action repository's
@@ -210,9 +210,9 @@ Set up once; no personal access token is involved.
 2. Install it on `kduma-OSS` with **Only select repositories** →
    `kduma-OSS/serverless-registry-publish-action` (not on this repository).
 3. Generate a private key on the App's page (a `.pem` file is downloaded).
-4. In this repository (**Settings** → **Secrets and variables** → **Actions**), add the
-   App ID as the repository **variable** `RELEASE_APP_ID` and the contents of the `.pem`
-   file as the repository **secret** `RELEASE_APP_PRIVATE_KEY`.
+4. In this repository (**Settings** → **Secrets and variables** → **Actions**), add two
+   repository **secrets**: `SERVERLESS_REGISTRY_RELEASE_APP_ID` with the App ID and
+   `SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY` with the contents of the `.pem` file.
 
 The App can only start workflows in the action repository; it cannot push there.
 

@@ -34,9 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - cargo-dist post-announce job (`.github/workflows/release-action.yml`): after a stable
   release it starts the Release workflow of
   `kduma-OSS/serverless-registry-publish-action` with the new version as the action's
-  default `sreg-version`, authenticated as a GitHub App (variable `RELEASE_APP_ID`, secret
-  `RELEASE_APP_PRIVATE_KEY`). Without the App it only prints a notice; the action
-  repository's hourly sync then picks the release up.
+  default `sreg-version`, authenticated as a GitHub App (repository secrets
+  `SERVERLESS_REGISTRY_RELEASE_APP_ID` and `SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY`).
+  Without them it only prints a notice; the action repository's hourly sync then picks
+  the release up.
 
 ### Changed
 
