@@ -6,11 +6,11 @@ one line that puts it into the environment (for NuGet: a `dotnet nuget add sourc
 command).
 
 Generic packages have no package manager: `sreg generic get` uses `--token` /
-`REGISTRY_TOKEN` (or `--oidc --oidc-project <PROJECT>`) directly. The publish commands take
-the same `--oidc --oidc-project <PROJECT>` pair; only `sreg auth` calls it `--project`.
+`REGISTRY_TOKEN` (or `--oidc [--oidc-project <PROJECT>]`) directly. The publish commands take
+the same `--oidc [--oidc-project <PROJECT>]` pair; only `sreg auth` calls it `--project`.
 
 ```text
-sreg auth <composer|npm|cargo|nuget> [--oidc --project <PROJECT>] [--write <FILE>]
+sreg auth <composer|npm|cargo|nuget> [--oidc [--project <PROJECT>]] [--write <FILE>]
           [--registry-name <NAME>] [--registry <URL>] [--token <TOKEN>] [--json]
 ```
 
@@ -20,13 +20,15 @@ determine where the token is stored. No request is made to the registry itself.
 ## Where the token comes from
 
 - Without `--oidc`: `--token` or `REGISTRY_TOKEN`, used as is.
-- With `--oidc --project <PROJECT>` inside a GitHub Actions job with
-  `permissions: id-token: write`: `sreg` requests a JWT from
-  `ACTIONS_ID_TOKEN_REQUEST_URL` (with `Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN`
-  and `audience=<registry URL without trailing slash>`, which must equal the Worker's
-  `PUBLIC_URL`) and builds the token `<PROJECT>:gh.<jwt>`. The credential `<PROJECT>` must
+- With `--oidc` inside a GitHub Actions job with `permissions: id-token: write`: `sreg`
+  requests a JWT from `ACTIONS_ID_TOKEN_REQUEST_URL` (with
+  `Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN` and
+  `audience=<registry URL without trailing slash>`, which must equal the Worker's
+  `PUBLIC_URL`) and builds the token `<PROJECT>:gh.<jwt>` with `--project <PROJECT>`, or
+  `_:gh.<jwt>` without it. The reserved login `_` asks the registry to find the project
+  from the JWT's `repository` claim; with `--project`, the credential `<PROJECT>` must
   have a `gh` auth entry matching the repository (and, if set, the ref and workflow).
-  `--project` is only accepted together with `--oidc`, and `--oidc` requires `--project`.
+  `--project` is only accepted together with `--oidc`.
 
 GitHub OIDC tokens are short-lived (minutes), so run `sreg auth --oidc` right before the
 step that installs packages.
@@ -115,6 +117,9 @@ sreg auth composer --write auth.json
 
 # GitHub Actions: install npm packages with an OIDC token of the project `shop-frontend`.
 sreg auth npm --oidc --project shop-frontend >> "$GITHUB_ENV"
+
+# The same, letting the registry find the project from the repository.
+sreg auth npm --oidc >> "$GITHUB_ENV"
 
 # cargo with a custom registry name.
 eval "$(sreg auth cargo --registry-name acme)"

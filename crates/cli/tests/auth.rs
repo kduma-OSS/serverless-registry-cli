@@ -120,6 +120,31 @@ async fn oidc_builds_a_gh_token_for_the_project() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn oidc_without_a_project_lets_the_registry_resolve_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/oidc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": "eyJ.oidc.sig" })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let request_url = format!("{}/oidc?api-version=2.0", server.uri());
+
+    let assert = sreg_with(
+        &server,
+        &["auth", "npm", "--oidc", "--json"],
+        &[
+            ("ACTIONS_ID_TOKEN_REQUEST_URL", request_url.as_str()),
+            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-token"),
+        ],
+    )
+    .await
+    .success();
+
+    assert_eq!(stdout_json(&assert)["value"], "_:gh.eyJ.oidc.sig");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn oidc_outside_github_actions_fails() {
     let server = MockServer::start().await;
 

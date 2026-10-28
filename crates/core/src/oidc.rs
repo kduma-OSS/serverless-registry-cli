@@ -84,7 +84,8 @@ pub async fn request_oidc_token(
     Ok(token.value)
 }
 
-/// Builds the registry token `<project>:gh.<jwt>`.
+/// Builds the registry token `<project>:gh.<jwt>` (`project` is `_` when the registry
+/// should resolve it from the token's `repository` claim).
 pub fn compose_token(project: &str, jwt: &str) -> String {
     format!("{project}:gh.{jwt}")
 }

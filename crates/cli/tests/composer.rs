@@ -298,6 +298,45 @@ async fn oidc_publishes_with_a_github_token() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn oidc_without_a_project_sends_the_resolve_login() {
+    let server = MockServer::start().await;
+    let repo = repository(Some("v1.2.3"));
+    Mock::given(method("GET"))
+        .and(path("/oidc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": "eyJ.oidc.sig" })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/publish/init"))
+        .and(header("authorization", "Bearer _:gh.eyJ.oidc.sig"))
+        .respond_with(init_responder(&server))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let request_url = format!("{}/oidc?api-version=2.0", server.uri());
+
+    sreg_with(
+        &server,
+        &[
+            "composer",
+            "publish",
+            "--path",
+            repo.path().to_str().unwrap(),
+            "--oidc",
+            "--dry-run",
+        ],
+        &[
+            ("ACTIONS_ID_TOKEN_REQUEST_URL", request_url.as_str()),
+            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-token"),
+        ],
+    )
+    .await
+    .success()
+    .stdout(predicate::str::contains("Dry run"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn existing_versions_exit_with_two_unless_skipped() {
     let server = MockServer::start().await;
     let repo = repository(Some("v1.2.3"));

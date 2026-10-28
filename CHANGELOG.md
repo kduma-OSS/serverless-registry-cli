@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--oidc` no longer needs a project: without `--project` (`sreg auth`) or
+  `--oidc-project` (publish commands, `sreg generic get`) the token is `_:gh.<jwt>`, and
+  the registry resolves the project from the JWT's `repository` claim.
+
 - `--path` is accepted by `sreg composer publish` only; npm, cargo and nuget publish
   work in the current directory and select the package with `--workspace`, `--package`
   and `--project`.

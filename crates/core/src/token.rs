@@ -5,6 +5,10 @@ use url::Url;
 use crate::error::{Error, Result};
 use crate::oidc::{compose_token, github_oidc_token};
 
+/// The reserved login of an OIDC token without a project (`_:gh.<jwt>`): the Worker
+/// resolves the project from the JWT's `repository` claim.
+pub const RESOLVE_PROJECT_LOGIN: &str = "_";
+
 /// Where the token comes from.
 #[derive(Debug, Clone, Copy)]
 pub struct TokenFlags<'a> {
@@ -12,7 +16,8 @@ pub struct TokenFlags<'a> {
     pub token: Option<&'a str>,
     /// `--oidc`: build the token from a GitHub Actions OIDC token.
     pub oidc: bool,
-    /// `--project`: the project the OIDC token is issued for.
+    /// `--project`: the project the OIDC token is issued for; `None` lets the registry
+    /// resolve it from the repository the token was issued to.
     pub project: Option<&'a str>,
     /// The registry URL; its form without trailing slash is the OIDC audience.
     pub registry: &'a Url,
@@ -21,16 +26,20 @@ pub struct TokenFlags<'a> {
 /// Resolves the token to authenticate with.
 ///
 /// With `oidc`, requests a GitHub Actions OIDC token with the registry URL as audience
-/// and returns `<project>:gh.<jwt>`; `project` is then required. Otherwise returns
+/// and returns `<project>:gh.<jwt>`, or `_:gh.<jwt>` without a project, which lets the
+/// registry find the project from the token's `repository` claim. Otherwise returns
 /// `token`.
 pub async fn resolve_token(flags: TokenFlags<'_>) -> Result<String> {
     if flags.oidc {
-        let project = flags
-            .project
-            .ok_or_else(|| Error::InvalidInput("--oidc requires --project <PROJECT>".into()))?;
-        validate_login(project)?;
+        let login = match flags.project {
+            Some(project) => {
+                validate_login(project)?;
+                project
+            }
+            None => RESOLVE_PROJECT_LOGIN,
+        };
         let jwt = github_oidc_token(&audience(flags.registry)).await?;
-        return Ok(compose_token(project, &jwt));
+        return Ok(compose_token(login, &jwt));
     }
 
     match flags.token.map(str::trim) {
@@ -40,7 +49,7 @@ pub async fn resolve_token(flags: TokenFlags<'_>) -> Result<String> {
         }
         _ => Err(Error::InvalidInput(
             "no token: pass --token or set REGISTRY_TOKEN (in GitHub Actions you can use \
-             --oidc --project <PROJECT> instead)"
+             --oidc instead)"
                 .into(),
         )),
     }
@@ -158,9 +167,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oidc_requires_a_valid_project() {
+    async fn oidc_rejects_an_invalid_project() {
         let registry = registry();
-        for project in [None, Some("Shop:x")] {
+        for project in [Some("Shop:x"), Some(""), Some("_")] {
             let err = resolve_token(TokenFlags {
                 token: None,
                 oidc: true,
@@ -204,5 +213,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(token, "ci-acme-sdk:gh.eyJ.x.y");
+
+        let token = runtime
+            .block_on(resolve_token(TokenFlags {
+                token: None,
+                oidc: true,
+                project: None,
+                registry: &registry,
+            }))
+            .unwrap();
+
+        assert_eq!(token, "_:gh.eyJ.x.y");
     }
 }

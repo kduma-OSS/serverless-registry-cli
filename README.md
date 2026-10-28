@@ -30,7 +30,7 @@ repository.
 | `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... [--meta-file <json>] [--spec <files.json>] [--no-append]` | Publishes files as one version of a generic package. `--label` applies to every file; `--spec` lists files with their own labels instead. Files are appended to an already published version (within the registry's append window) unless `--no-append` is given. Arguments after `--` are rejected. |
 | `sreg generic get <name> [<version>\|latest] [--label k=v]... [--out <dir>] [--prerelease]` | Downloads the files of a version matching the labels into `--out` after verifying size and SHA-256 and prints their paths; `--json` prints the feed entry without downloading. |
 | `sreg whoami` | Shows the identity and grants of the current token (`GET /api/v1/whoami`). |
-| `sreg auth <composer\|npm\|cargo\|nuget> [--oidc --project <p>] [--write <file>] [--registry-name <n>]` | Writes credentials to `auth.json`, `.npmrc`, `credentials.toml` or `nuget.config`, or prints them for the environment (e.g. as `COMPOSER_AUTH`, or a `dotnet nuget add source` command). With `--oidc`, inside a GitHub Actions job with `id-token: write`, it fetches a JWT for the registry and builds a `<project>:gh.<jwt>` token; without it, it uses `REGISTRY_TOKEN`. See [`docs/cli-auth.md`](docs/cli-auth.md). |
+| `sreg auth <composer\|npm\|cargo\|nuget> [--oidc [--project <p>]] [--write <file>] [--registry-name <n>]` | Writes credentials to `auth.json`, `.npmrc`, `credentials.toml` or `nuget.config`, or prints them for the environment (e.g. as `COMPOSER_AUTH`, or a `dotnet nuget add source` command). With `--oidc`, inside a GitHub Actions job with `id-token: write`, it fetches a JWT for the registry and builds a `<project>:gh.<jwt>` token (`_:gh.<jwt>` without `--project`: the registry then finds the project from the repository the token was issued to); without it, it uses `REGISTRY_TOKEN`. See [`docs/cli-auth.md`](docs/cli-auth.md). |
 | `sreg version` | Prints the version of `sreg` and, with `--registry`, the registry's version and the minimum client version it accepts. |
 
 Every publish command computes the SHA-256 digest and size of each file, calls `init`,
@@ -38,10 +38,11 @@ uploads every file with `PUT` (3 attempts with backoff; a new `init` when the pr
 URLs expire) and calls `commit`. All of them accept `--dry-run` (stop after `init`),
 `--skip-existing` (when the version, or an appended file, is already published, print
 `version already published, skipping` and exit with `0` instead of `2`; with `--json`
-the output is `{ "skipped": true, "eco", "name", "version" }`), and `--oidc` with
-`--oidc-project <p>` (authenticate with a GitHub Actions OIDC token for the project
-instead of `REGISTRY_TOKEN`; `sreg generic get` accepts them too; `sreg auth` calls the
-project `--project`). The composer, npm, cargo and nuget publish commands also accept
+the output is `{ "skipped": true, "eco", "name", "version" }`), and `--oidc` with an
+optional `--oidc-project <p>` (authenticate with a GitHub Actions OIDC token instead of
+`REGISTRY_TOKEN`: `<p>:gh.<jwt>`, or `_:gh.<jwt>` without `--oidc-project`, which lets
+the registry find the project from the repository the token was issued to;
+`sreg generic get` accepts them too; `sreg auth` calls the project `--project`). The composer, npm, cargo and nuget publish commands also accept
 `--tag-prefix <p>` instead of `--version`: the version is then taken from the tag on
 `HEAD` that starts with the prefix.
 

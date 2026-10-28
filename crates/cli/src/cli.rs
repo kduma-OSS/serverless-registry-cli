@@ -140,7 +140,8 @@ pub struct OidcArgs {
     #[arg(long)]
     pub oidc: bool,
 
-    /// Project the OIDC token is issued for (requires --oidc)
+    /// Project the OIDC token is issued for (requires --oidc; by default the registry
+    /// finds the project from the repository the token was issued to)
     #[arg(long = "oidc-project", value_name = "PROJECT", requires = "oidc")]
     pub project: Option<String>,
 }
@@ -382,7 +383,8 @@ pub struct AuthArgs {
     #[arg(long)]
     pub oidc: bool,
 
-    /// Project the OIDC token is issued for
+    /// Project the OIDC token is issued for (by default the registry finds the project
+    /// from the repository the token was issued to)
     #[arg(long, value_name = "PROJECT", requires = "oidc")]
     pub project: Option<String>,
 
@@ -711,6 +713,8 @@ mod tests {
     #[test]
     fn project_requires_oidc() {
         assert!(Cli::try_parse_from(["sreg", "auth", "composer", "--project", "p"]).is_err());
+        // Without a project the registry resolves it from the token.
+        assert!(Cli::try_parse_from(["sreg", "auth", "composer", "--oidc"]).is_ok());
         assert!(
             Cli::try_parse_from(["sreg", "auth", "composer", "--oidc", "--project", "p"]).is_ok()
         );
