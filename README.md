@@ -72,7 +72,29 @@ In GitHub Actions, use the [publish action](#github-action), which does all of t
 | `sreg generic get <name> [<version>\|<constraint>\|latest] [--label k=v]... [--sole] [--out <path>] [--prerelease]` | Downloads the files of a version matching the labels into `--out` after verifying size and SHA-256 and prints their paths; `--json` prints the feed entry without downloading. A `<version>` that is not an exact semver version is a constraint (npm syntax: `^1.2`, `">=1 <2"`, `1.x`) that the registry resolves to its highest matching version (`/generic/<name>/latest?version=<constraint>`, prereleases only with `--prerelease`); the resolved version is printed on stderr. `--sole` fails unless the label filter selects exactly one file (`/generic/<name>/<version>/-/download`): when several match, the candidates are listed and `sreg` exits with `1`; `--out` may then also name the file to write. |
 | `sreg whoami` | Shows the identity and grants of the current token (`GET /api/v1/whoami`). |
 | `sreg auth <composer\|npm\|cargo\|nuget\|swift\|maven> [--oidc [--project <p>]] [--write <file>] [--registry-name <n>]` | Writes credentials to `auth.json`, `.npmrc`, `credentials.toml`, `nuget.config`, `.netrc` or `settings.xml`, or prints them for the environment (e.g. as `COMPOSER_AUTH`, a `dotnet nuget add source` or `swift package-registry login` command, or Maven `settings.xml` and Gradle snippets). With `--oidc`, inside a GitHub Actions job with `id-token: write`, it fetches a JWT for the registry and builds a `<project>:gh.<jwt>` token (`_:gh.<jwt>` without `--project`: the registry then finds the project from the repository the token was issued to); without it, it uses `REGISTRY_TOKEN`. See [`docs/cli-auth.md`](docs/cli-auth.md). |
+| `sreg login [--publish <eco>:<package>@<version>]...` | Signs in through the browser and prints `export REGISTRY_TOKEN='…'` for a short-lived token, for several commands in a row (`eval "$(sreg login)"`). Without `--publish` the token is for downloading (one hour, or longer when you tick "extended validity" on the page); with it, a publish token for exactly the listed versions (15 minutes), approved only when the credential's grants allow every one. The login is a password with an optional one-time code (a `login` secret of the credential); see [Signing in through the browser](#signing-in-through-the-browser). |
 | `sreg version` | Prints the version of `sreg` and, with `--registry`, the registry's version and the minimum client version it accepts. |
+
+### Signing in through the browser
+
+A credential can have a **login** secret: a password and, optionally, a one-time code. Adding
+`--login` to `sreg auth <eco>`, `sreg generic get` and every `publish` command (instead of
+`--oidc` or a static token), or running `sreg login`, prints a link to a page of the
+registry (and opens it unless `--no-browser` or `SREG_NO_BROWSER` is set). There you sign in,
+or, when the browser is already signed in, only approve. The command waits and receives a
+short-lived token:
+
+- `sreg auth npm --login --write .npmrc`, `sreg generic get <name> --login`: a pull token (one
+  hour; "extended validity" on the page makes it last as long as the registry allows, 24 hours
+  by default; `generic get` keeps the token in memory only).
+- `sreg composer publish --login` (and the other `publish` commands): a publish token for the
+  one package version being published. The page lists it and approves only when the grants
+  allow it; with a one-time code, a recent one is required (15 minutes).
+- `sreg login [--publish composer:acme/sdk@1.4.0]...`: the token as an `export` line, for a
+  pull or for the listed package versions.
+
+`--login` cannot be combined with `--oidc`. The token is never written anywhere except by
+`sreg auth --write`; the page and the password are the registry's, `sreg` never sees them.
 
 Every publish command computes the SHA-256 digest and size of each file, calls `init`,
 uploads every file with `PUT` (3 attempts with backoff; a new `init` when the presigned

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sign in through the browser.** `--login` on `sreg auth <eco>`, `sreg generic get` and every
+  `publish` command, and the new `sreg login [--publish <eco>:<package>@<version>]...`, open a
+  page of the registry where you sign in with a `login` secret (a password and an optional
+  one-time code) or just approve, and receive a short-lived token: a pull token, or a publish
+  token for exactly the package versions being published. `--no-browser` (or
+  `SREG_NO_BROWSER`) prints the page instead of opening it. Needs a registry with login
+  secrets (`docs/api.md` 2.6, 6.20, 6.21).
+- A `401` now suggests signing in again with `sreg login`.
+
 ## [0.1.2] - 2026-10-28
 
 ### Changed

@@ -21,6 +21,7 @@ determine where the token is stored. No request is made to the registry itself.
 
 ## Where the token comes from
 
+- With `--login`: you sign in on a page of the registry and approve; see below.
 - Without `--oidc`: `--token` or `REGISTRY_TOKEN`, used as is, or the credentials of a
   registry URL of the form `https://<login>:<password>@packages.example.com/`, which
   give the token `<login>:<password>` (both parts percent-decoded, so a `@` or `:` in
@@ -199,3 +200,32 @@ sreg auth maven --oidc --write ~/.m2/settings.xml
 
 `0` on success, `1` on any error (no registry URL, no token, OIDC not available, a
 credentials file that cannot be parsed or written).
+
+## `--login`: a token from the browser
+
+```text
+sreg auth <eco> --login [--write <FILE>] [--no-browser]
+sreg login [--publish <ECO>:<PACKAGE>@<VERSION>]... [--no-browser] [--json]
+```
+
+`--login` replaces `--oidc` (the two cannot be combined) and `REGISTRY_TOKEN`: `sreg` asks
+the registry for a login session (`POST /api/v1/auth/sessions`, no credential), prints the
+page to open and the operation it asks you to approve, opens the page in a browser unless
+`--no-browser` (or `SREG_NO_BROWSER`) is given, and polls until you approve or refuse. You
+sign in with the project name and password of a `login` secret (and a one-time code when it
+has one) or, if the browser is already signed in, only approve. The token it gets is
+short-lived: one hour for a pull (longer when you tick "extended validity"), 15 minutes for a
+publish. Messages go to stderr; with `sreg auth` the token is then written or printed as
+usual, with `sreg login` it is the only line on stdout:
+
+```sh
+eval "$(sreg login)"                       # a pull token in $REGISTRY_TOKEN
+eval "$(sreg login --publish composer:acme/sdk@1.4.0 --publish npm:@acme/sdk@2.0.0)"
+```
+
+`--publish` takes `<ecosystem>:<package>@<version>`; the ecosystem ends at the first `:` (a
+Maven package is `group:artifact`) and the version starts after the last `@` (an npm scope
+starts with one). A publish token works only for the listed versions, and only if the
+credential's kind is `publish` and its grants allow every one of them; a pull token needs a
+`read` credential. A refusal, an expired session or a timeout fails the command with exit
+code 1. `docs/api.md` 2.6, 6.20 and 6.21 describe the protocol.
