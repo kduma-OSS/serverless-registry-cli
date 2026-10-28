@@ -3,6 +3,7 @@
 mod auth;
 #[cfg(feature = "generic")]
 mod generic;
+mod nuget_config;
 #[cfg(any(
     feature = "composer",
     feature = "npm",

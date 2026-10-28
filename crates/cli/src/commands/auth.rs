@@ -1,7 +1,8 @@
-//! `sreg auth <eco>`: credentials for Composer, npm and cargo.
+//! `sreg auth <eco>`: credentials for Composer, npm, cargo and NuGet.
 //!
 //! With `--write <file>` the token is merged into the package manager's credentials
-//! file; without it a line for the environment is printed. See `docs/cli-auth.md`.
+//! file; without it a line for the environment (or, for NuGet, a `dotnet nuget add
+//! source` command) is printed. See `docs/cli-auth.md`.
 
 use std::path::Path;
 
@@ -12,6 +13,7 @@ use sreg_core::Ecosystem;
 use url::Url;
 
 use crate::cli::{AuthArgs, GlobalArgs};
+use crate::commands::nuget_config::{self, NugetSource};
 use crate::context;
 use crate::output::Output;
 
@@ -20,6 +22,16 @@ struct Written<'a> {
     eco: Ecosystem,
     file: &'a Path,
     key: String,
+}
+
+#[derive(Serialize)]
+struct NugetCommand {
+    eco: Ecosystem,
+    source: String,
+    name: String,
+    username: String,
+    password: String,
+    command: String,
 }
 
 #[derive(Serialize)]
@@ -64,12 +76,33 @@ pub async fn run(global: &GlobalArgs, out: &Output, args: &AuthArgs) -> anyhow::
                 );
             })
         }
-        None => {
-            let (name, value) = target.variable(&token)?;
-            let line = target.shell_line(&name, &value);
-            let report = Variable { eco, name, value };
-            out.emit(&report, || println!("{line}"))
-        }
+        None => match &target {
+            Target::Nuget { name, source } => {
+                let password = Token::password(&token)?;
+                let command = format!(
+                    "dotnet nuget add source {} -n {} -u {} -p {} --store-password-in-clear-text",
+                    shell_quote(source),
+                    shell_quote(name),
+                    shell_quote(&login),
+                    shell_quote(password)
+                );
+                let report = NugetCommand {
+                    eco,
+                    source: source.clone(),
+                    name: name.clone(),
+                    username: login,
+                    password: password.to_owned(),
+                    command,
+                };
+                out.emit(&report, || println!("{}", report.command))
+            }
+            _ => {
+                let (name, value) = target.variable(&token)?;
+                let line = target.shell_line(&name, &value);
+                let report = Variable { eco, name, value };
+                out.emit(&report, || println!("{line}"))
+            }
+        },
     }
 }
 
@@ -82,6 +115,8 @@ enum Target {
     Npm { key: String },
     /// `credentials.toml` `[registries.<name>]`.
     Cargo { name: String },
+    /// `nuget.config` source `<name>` for `<registry>/nuget/index.json`.
+    Nuget { name: String, source: String },
 }
 
 impl Target {
@@ -101,19 +136,14 @@ impl Target {
                     registry.path().trim_end_matches('/')
                 ),
             },
-            Ecosystem::Cargo => {
-                let valid = !registry_name.is_empty()
-                    && registry_name
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-                if !valid {
-                    bail!("invalid --registry-name `{registry_name}`: use letters, digits, `-` and `_`");
-                }
-                Target::Cargo {
-                    name: registry_name.to_owned(),
-                }
-            }
-            Ecosystem::Nuget => bail!("`sreg auth nuget` is not implemented yet"),
+            Ecosystem::Cargo => Target::Cargo {
+                name: validate_registry_name(registry_name, false)?,
+            },
+            Ecosystem::Nuget => Target::Nuget {
+                // The name is also an XML element name in nuget.config.
+                name: validate_registry_name(registry_name, true)?,
+                source: format!("{}/nuget/index.json", sreg_core::token::audience(registry)),
+            },
             Ecosystem::Generic => {
                 bail!(
                     "generic packages have no package manager; pass --token to `sreg generic get`"
@@ -128,6 +158,7 @@ impl Target {
             Target::Composer { host } => format!("bearer.{host}"),
             Target::Npm { key } => key.clone(),
             Target::Cargo { name } => format!("registries.{name}.token"),
+            Target::Nuget { name, .. } => format!("packageSourceCredentials.{name}"),
         }
     }
 
@@ -146,6 +177,7 @@ impl Target {
                 ),
                 token.to_owned(),
             ),
+            Target::Nuget { .. } => bail!("NuGet credentials are not passed through a variable"),
         })
     }
 
@@ -166,6 +198,15 @@ impl Target {
             Target::Composer { host } => merge_auth_json(existing, host, token),
             Target::Npm { key } => Ok(merge_npmrc(existing, key, token)),
             Target::Cargo { name } => merge_credentials_toml(existing, name, token),
+            Target::Nuget { name, source } => nuget_config::merge(
+                existing,
+                &NugetSource {
+                    name,
+                    url: source,
+                    username: Token::login(token)?,
+                    password: Token::password(token)?,
+                },
+            ),
         }
     }
 }
@@ -251,6 +292,27 @@ fn merge_credentials_toml(
         .with_context(|| format!("`registries.{name}` is not a table"))?;
     registry.insert("token".to_owned(), toml::Value::String(token.to_owned()));
     Ok(toml::to_string(&root)?)
+}
+
+/// Checks `--registry-name`: letters, digits, `-` and `_`; with `xml_name`, it must
+/// also start with a letter or `_` so it is a valid XML element name.
+fn validate_registry_name(name: &str, xml_name: bool) -> anyhow::Result<String> {
+    let valid = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && (!xml_name || name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'));
+    if !valid {
+        bail!(
+            "invalid --registry-name `{name}`: use letters, digits, `-` and `_`{}",
+            if xml_name {
+                ", starting with a letter"
+            } else {
+                ""
+            }
+        );
+    }
+    Ok(name.to_owned())
 }
 
 /// Quotes `value` for POSIX shells.
@@ -353,6 +415,20 @@ mod tests {
             cargo.shell_line(&name, &value),
             format!("export CARGO_REGISTRIES_ACME_PRIVATE_TOKEN='{TOKEN}'")
         );
+    }
+
+    #[test]
+    fn nuget_source_keeps_the_path_prefix() {
+        let url = Url::parse("https://example.com/registry/").unwrap();
+        assert_eq!(
+            Target::new(Ecosystem::Nuget, &url, "acme").unwrap(),
+            Target::Nuget {
+                name: "acme".into(),
+                source: "https://example.com/registry/nuget/index.json".into()
+            }
+        );
+        assert!(Target::new(Ecosystem::Nuget, &url, "1acme").is_err());
+        assert!(Target::new(Ecosystem::Cargo, &url, "1acme").is_ok());
     }
 
     #[test]

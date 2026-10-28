@@ -131,3 +131,50 @@ async fn oidc_outside_github_actions_fails() {
     .code(1)
     .stderr(predicate::str::contains("ACTIONS_ID_TOKEN_REQUEST_URL"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prints_the_dotnet_add_source_command_for_nuget() {
+    let server = MockServer::start().await;
+
+    sreg(&server, &["auth", "nuget", "--registry-name", "acme"])
+        .await
+        .success()
+        .stdout(format!(
+            "dotnet nuget add source '{}/nuget/index.json' -n 'acme' -u 'root' -p '{}' \
+             --store-password-in-clear-text\n",
+            server.uri(),
+            TOKEN.split_once(':').unwrap().1
+        ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writes_nuget_config() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("nuget.config");
+    std::fs::write(
+        &file,
+        "<configuration>\n  <packageSources>\n    <add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />\n  </packageSources>\n</configuration>\n",
+    )
+    .unwrap();
+
+    let assert = sreg(
+        &server,
+        &["auth", "nuget", "--write", file.to_str().unwrap(), "--json"],
+    )
+    .await
+    .success();
+
+    assert_eq!(stdout_json(&assert)["key"], "packageSourceCredentials.sreg");
+    let content = std::fs::read_to_string(&file).unwrap();
+    assert!(content.contains("nuget.org"));
+    assert!(content.contains(&format!(
+        "<add key=\"sreg\" value=\"{}/nuget/index.json\"/>",
+        server.uri()
+    )));
+    assert!(content.contains("<add key=\"Username\" value=\"root\"/>"));
+    assert!(content.contains(&format!(
+        "<add key=\"ClearTextPassword\" value=\"{}\"/>",
+        TOKEN.split_once(':').unwrap().1
+    )));
+}
