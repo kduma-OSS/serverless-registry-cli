@@ -37,7 +37,12 @@ jobs:
       - run: cargo test --workspace --locked
 
   features:
-    name: Feature gating
+    name: Feature gating (${{ matrix.features || 'no default features' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # A binary with a single ecosystem, or with none, must build and pass its tests.
+        features: [composer, npm, cargo, nuget, generic, swift, maven, ""]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,9 +50,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # A binary with a single ecosystem must build and pass its tests.
-      - run: cargo clippy -p sreg-cli --all-targets --locked --no-default-features --features composer -- -D warnings
-      - run: cargo test -p sreg-cli --locked --no-default-features --features composer
+        with:
+          key: features-${{ matrix.features }}
+      - run: cargo clippy -p sreg-cli --all-targets --locked --no-default-features --features "${{ matrix.features }}" -- -D warnings
+      - run: cargo test -p sreg-cli --locked --no-default-features --features "${{ matrix.features }}"
 
   msrv:
     name: Minimum supported Rust version
