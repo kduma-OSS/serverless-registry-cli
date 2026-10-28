@@ -230,8 +230,9 @@ pub struct PublishCommitRequest {
 pub struct PublishedFile {
     /// File name.
     pub name: String,
-    /// Download URL.
-    pub url: String,
+    /// Download URL; `None` (`null` on the wire) for a file without a download endpoint,
+    /// such as NuGet symbols.
+    pub url: Option<String>,
 }
 
 /// `POST /api/v1/publish/commit` response.
@@ -755,6 +756,23 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(response.files[0].name, "sdk-2.3.1.tgz");
+    }
+
+    #[test]
+    fn commit_response_accepts_files_without_url() {
+        let body = json!({
+            "eco": "nuget", "name": "acme.sdk", "version": "1.2.0",
+            "url": "https://packages.example.com/nuget/flat/acme.sdk/1.2.0/acme.sdk.1.2.0.nupkg",
+            "files": [
+                { "name": "acme.sdk.1.2.0.nupkg", "url": "https://packages.example.com/nuget/flat/acme.sdk/1.2.0/acme.sdk.1.2.0.nupkg" },
+                { "name": "acme.sdk.1.2.0.snupkg", "url": null }
+            ]
+        });
+        let response: PublishCommitResponse = serde_json::from_value(body.clone()).unwrap();
+        assert!(response.files[0].url.is_some());
+        assert_eq!(response.files[1].url, None);
+        // `--json` prints the body as received.
+        assert_eq!(serde_json::to_value(&response).unwrap(), body);
     }
 
     #[test]

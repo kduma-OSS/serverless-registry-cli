@@ -231,7 +231,10 @@ fn print_published(response: &PublishCommitResponse) {
         let rows: Vec<Vec<String>> = response
             .files
             .iter()
-            .map(|file| vec![file.name.clone(), file.url.clone()])
+            .map(|file| {
+                let url = file.url.as_deref().unwrap_or("(no download URL)");
+                vec![file.name.clone(), url.to_owned()]
+            })
             .collect();
         println!("{}", table(&["FILE", "URL"], &rows));
     }
