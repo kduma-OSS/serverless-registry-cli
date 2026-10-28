@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Credentials with roles (registry API, `docs/api.md` 2.4): `sreg whoami` prints `Roles:` (the
+  roles the token may use) and, for a token with both `read` and `publish`, a list of grants
+  for each role. `--json` output gains `roles` and `access`. The client models know `roles`,
+  `read_grants`, `publish_grants` and the `scope` of a secret, and `update_credential` sends
+  `PATCH` with roles and per-role grants. Registries without roles keep working: `kind` and
+  `grants` are used when `roles` and `access` are missing.
+
+### Changed
+
+- `sreg whoami` prints `Roles:` instead of `Kind:` (`--json` still has `kind`).
+
 ## [0.1.5] - 2026-10-28
 
 ### Fixed

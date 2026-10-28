@@ -148,15 +148,71 @@ pub struct VersionInfo {
     pub schema_version: u64,
 }
 
+/// The grants of each role a token may use (`access` of `GET /api/v1/whoami`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Access {
+    /// Grants of the `read` role; absent when the token may not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<Vec<Grant>>,
+    /// Grants of the `publish` role; absent when the token may not publish.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publish: Option<Vec<Grant>>,
+}
+
 /// `GET /api/v1/whoami`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Whoami {
     /// `[<source>.]<project>` of the credential.
     pub project: String,
-    /// Role of the credential.
+    /// Legacy view of the roles: `read` when the token may read, otherwise its other role.
     pub kind: Kind,
-    /// Grants of the credential; empty for `admin`.
+    /// Legacy view of the grants: those of `kind`; empty for `admin`.
     pub grants: Vec<Grant>,
+    /// The roles this token may use. Absent from registries older than credential roles; see
+    /// [`Whoami::token_roles`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<Kind>,
+    /// The grants of each role in [`roles`](Self::roles); see [`Whoami::role_grants`].
+    #[serde(default, skip_serializing_if = "Access::is_empty")]
+    pub access: Access,
+}
+
+impl Access {
+    /// Whether the registry sent no per-role grants.
+    pub fn is_empty(&self) -> bool {
+        self.read.is_none() && self.publish.is_none()
+    }
+}
+
+impl Whoami {
+    /// The roles the token may use; `[kind]` for a registry that does not send `roles`.
+    pub fn token_roles(&self) -> Vec<Kind> {
+        if self.roles.is_empty() {
+            vec![self.kind]
+        } else {
+            self.roles.clone()
+        }
+    }
+
+    /// The grants of each of the token's roles that carries grants (`admin` has none), in
+    /// `read`, `publish` order. A registry that does not send `access` reports its legacy
+    /// `grants` under `kind`.
+    pub fn role_grants(&self) -> Vec<(Kind, &[Grant])> {
+        if self.access.is_empty() {
+            return match self.kind {
+                Kind::Admin => Vec::new(),
+                kind => vec![(kind, self.grants.as_slice())],
+            };
+        }
+        let mut out = Vec::new();
+        if let Some(grants) = &self.access.read {
+            out.push((Kind::Read, grants.as_slice()));
+        }
+        if let Some(grants) = &self.access.publish {
+            out.push((Kind::Publish, grants.as_slice()));
+        }
+        out
+    }
 }
 
 /// A file declared in `POST /api/v1/publish/init`.
@@ -514,6 +570,10 @@ pub struct AuthEntry {
     pub created: String,
     /// Expiry time (RFC 3339); `None` means never.
     pub expires: Option<String>,
+    /// The roles this entry may use, within the credential's roles. Empty when the registry
+    /// predates credential roles (the entry then has the credential's single role).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<Kind>,
     /// A note about the entry (at most 200 characters); `None` when there is none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -553,12 +613,34 @@ impl AuthEntry {
 pub struct Credential {
     /// Local project slug.
     pub project: String,
-    /// Role of the credential.
+    /// Legacy view of the roles: `read` when the credential holds it, otherwise its other
+    /// role.
     pub kind: Kind,
+    /// The roles of the credential: `admin` alone, or `read` and/or `publish`. Empty when the
+    /// registry predates credential roles; see [`Credential::held_roles`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<Kind>,
     /// Auth entries, including expired ones until the cron removes them.
     pub auth: Vec<AuthEntry>,
-    /// Grants; always empty for `admin`.
+    /// Legacy view of the grants: those of `kind`; always empty for `admin`.
     pub grants: Vec<Grant>,
+    /// Grants of the `read` role; empty without it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_grants: Vec<Grant>,
+    /// Grants of the `publish` role; empty without it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publish_grants: Vec<Grant>,
+}
+
+impl Credential {
+    /// The roles of the credential; `[kind]` for a registry that does not send `roles`.
+    pub fn held_roles(&self) -> Vec<Kind> {
+        if self.roles.is_empty() {
+            vec![self.kind]
+        } else {
+            self.roles.clone()
+        }
+    }
 }
 
 /// `GET /api/v1/credentials`.
@@ -578,6 +660,10 @@ pub struct AddSecretRequest {
     /// Expiry (RFC 3339 or `YYYY-MM-DD`); omitted means never.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
+    /// The roles the secret may use. Required for a credential with both `read` and
+    /// `publish`; omitted otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<Kind>,
     /// A note about the entry (at most 200 characters).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -607,6 +693,7 @@ impl AddSecretRequest {
         AddSecretRequest {
             secret_type: SecretType::Key,
             expires,
+            scope: Vec::new(),
             description: None,
             password: None,
             totp: None,
@@ -674,13 +761,59 @@ impl fmt::Debug for AddSecretResponse {
 pub struct CreateCredentialRequest {
     /// Project slug.
     pub project: String,
-    /// Role of the credential.
-    pub kind: Kind,
-    /// Grants; must be empty for `admin`.
+    /// Legacy single-role form: the credential's only role. Not together with
+    /// [`roles`](Self::roles).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Kind>,
+    /// The roles of the credential: `admin` alone, or `read` and/or `publish`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<Kind>,
+    /// Legacy form: the grants of a credential with one role; must be empty for `admin`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
-    /// The first auth entry; the registry defaults to a `key` without expiry.
+    /// Grants of the `read` role.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_grants: Vec<Grant>,
+    /// Grants of the `publish` role.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publish_grants: Vec<Grant>,
+    /// The first auth entry; the registry defaults to a `key` without expiry, which it
+    /// refuses for a credential with both roles (the entry needs a `scope`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<AddSecretRequest>,
+}
+
+impl CreateCredentialRequest {
+    /// A credential with a single role and its grants (the legacy form).
+    pub fn single(project: impl Into<String>, kind: Kind, grants: Vec<Grant>) -> Self {
+        CreateCredentialRequest {
+            project: project.into(),
+            kind: Some(kind),
+            roles: Vec::new(),
+            grants,
+            read_grants: Vec::new(),
+            publish_grants: Vec::new(),
+            secret: None,
+        }
+    }
+
+    /// A credential with both roles, separate grants and the scope of its first secret.
+    pub fn both(
+        project: impl Into<String>,
+        read_grants: Vec<Grant>,
+        publish_grants: Vec<Grant>,
+        secret: AddSecretRequest,
+    ) -> Self {
+        CreateCredentialRequest {
+            project: project.into(),
+            kind: None,
+            roles: vec![Kind::Read, Kind::Publish],
+            grants: Vec::new(),
+            read_grants,
+            publish_grants,
+            secret: Some(secret),
+        }
+    }
 }
 
 /// `POST /api/v1/credentials` response.
@@ -720,6 +853,21 @@ pub struct DescribeSecretRequest {
 pub struct UpdateGrantsRequest {
     /// The new, complete list of grants.
     pub grants: Vec<Grant>,
+}
+
+/// `PATCH /api/v1/credentials/<project>` request for credentials with roles: every field is
+/// optional, at least one must be set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateCredentialRequest {
+    /// The new roles (`read` and/or `publish`; `admin` cannot be added or removed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<Kind>>,
+    /// The new, complete list of `read` grants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_grants: Option<Vec<Grant>>,
+    /// The new, complete list of `publish` grants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publish_grants: Option<Vec<Grant>>,
 }
 
 /// `DELETE /api/v1/credentials/<project>`.
@@ -1017,6 +1165,120 @@ mod tests {
     }
 
     #[test]
+    fn credential_with_both_roles_parses_scopes_and_per_role_grants() {
+        let credential: Credential = serde_json::from_value(json!({
+            "project": "acme-sdk",
+            "kind": "read",
+            "roles": ["read", "publish"],
+            "auth": [
+                { "id": "3f9a1c0b7d2e", "type": "key", "scope": ["read"],
+                  "created": "2026-10-28T09:00:00Z", "expires": null },
+                { "id": "c08e5b1f9a27", "type": "gh", "scope": ["publish"],
+                  "repository": "acme/acme-sdk", "ref": "refs/tags/v*", "workflow": null,
+                  "created": "2026-10-28T09:05:00Z", "expires": null }
+            ],
+            "grants": [{ "eco": "cargo", "package": "acme-core", "versions": "*" }],
+            "read_grants": [{ "eco": "cargo", "package": "acme-core", "versions": "*" }],
+            "publish_grants": [{ "eco": "cargo", "package": "acme-sdk", "versions": "*" }]
+        }))
+        .unwrap();
+        assert_eq!(credential.held_roles(), vec![Kind::Read, Kind::Publish]);
+        assert_eq!(credential.auth[0].scope, vec![Kind::Read]);
+        assert_eq!(credential.auth[1].scope, vec![Kind::Publish]);
+        assert_eq!(credential.read_grants[0].package, "acme-core");
+        assert_eq!(credential.publish_grants[0].package, "acme-sdk");
+    }
+
+    #[test]
+    fn credential_from_a_registry_without_roles_has_its_kind_as_only_role() {
+        let credential: Credential = serde_json::from_value(json!({
+            "project": "ci", "kind": "publish",
+            "auth": [{ "id": "3f9a1c0b7d2e", "type": "key",
+                       "created": "2026-10-28T09:00:00Z", "expires": null }],
+            "grants": []
+        }))
+        .unwrap();
+        assert_eq!(credential.held_roles(), vec![Kind::Publish]);
+        assert!(credential.auth[0].scope.is_empty());
+        assert!(credential.read_grants.is_empty());
+    }
+
+    #[test]
+    fn whoami_reports_roles_and_the_grants_of_each() {
+        let both: Whoami = serde_json::from_value(json!({
+            "project": "acme-sdk", "kind": "read", "grants": [],
+            "roles": ["read", "publish"],
+            "access": {
+                "read": [{ "eco": "npm", "package": "@acme/sdk", "versions": "*" }],
+                "publish": []
+            }
+        }))
+        .unwrap();
+        assert_eq!(both.token_roles(), vec![Kind::Read, Kind::Publish]);
+        let sections = both.role_grants();
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].0, Kind::Read);
+        assert_eq!(sections[0].1.len(), 1);
+        assert_eq!(sections[1].0, Kind::Publish);
+        assert!(sections[1].1.is_empty());
+    }
+
+    #[test]
+    fn whoami_from_a_registry_without_roles_falls_back_to_kind_and_grants() {
+        let legacy: Whoami = serde_json::from_value(json!({
+            "project": "ci", "kind": "publish",
+            "grants": [{ "eco": "npm", "package": "@acme/sdk", "versions": "*" }]
+        }))
+        .unwrap();
+        assert_eq!(legacy.token_roles(), vec![Kind::Publish]);
+        let sections = legacy.role_grants();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].0, Kind::Publish);
+        let admin: Whoami =
+            serde_json::from_value(json!({ "project": "root", "kind": "admin", "grants": [] }))
+                .unwrap();
+        assert!(admin.role_grants().is_empty());
+    }
+
+    #[test]
+    fn create_credential_with_both_roles_serializes_roles_grants_and_scope() {
+        let mut secret = AddSecretRequest::key(None);
+        secret.scope = vec![Kind::Read];
+        let request = CreateCredentialRequest::both(
+            "acme-sdk",
+            vec![Grant::parse_shorthand("cargo:acme-core").unwrap()],
+            vec![Grant::parse_shorthand("cargo:acme-sdk").unwrap()],
+            secret,
+        );
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            json!({
+                "project": "acme-sdk",
+                "roles": ["read", "publish"],
+                "read_grants": [{ "eco": "cargo", "package": "acme-core", "versions": "*" }],
+                "publish_grants": [{ "eco": "cargo", "package": "acme-sdk", "versions": "*" }],
+                "secret": { "type": "key", "scope": ["read"] }
+            })
+        );
+    }
+
+    #[test]
+    fn update_credential_request_sends_only_what_is_set() {
+        let request = UpdateCredentialRequest {
+            roles: Some(vec![Kind::Read, Kind::Publish]),
+            publish_grants: Some(vec![Grant::parse_shorthand("cargo:acme-sdk").unwrap()]),
+            ..UpdateCredentialRequest::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            json!({
+                "roles": ["read", "publish"],
+                "publish_grants": [{ "eco": "cargo", "package": "acme-sdk", "versions": "*" }]
+            })
+        );
+    }
+
+    #[test]
     fn auth_entries_carry_a_description_and_the_login_type() {
         let list: CredentialList = serde_json::from_value(json!({
             "credentials": [{
@@ -1118,6 +1380,7 @@ mod tests {
             secret_type: SecretType::Key,
             created: "2026-10-28T09:00:00Z".into(),
             expires: None,
+            scope: Vec::new(),
             description: None,
             totp: None,
             repository: None,
@@ -1133,12 +1396,11 @@ mod tests {
 
     #[test]
     fn create_credential_request_omits_default_secret() {
-        let request = CreateCredentialRequest {
-            project: "shop-frontend".into(),
-            kind: Kind::Read,
-            grants: vec![Grant::parse_shorthand("composer:acme/*:*").unwrap()],
-            secret: None,
-        };
+        let request = CreateCredentialRequest::single(
+            "shop-frontend",
+            Kind::Read,
+            vec![Grant::parse_shorthand("composer:acme/*:*").unwrap()],
+        );
         assert_eq!(
             serde_json::to_value(&request).unwrap(),
             json!({
