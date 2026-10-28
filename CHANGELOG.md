@@ -28,15 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generic packages: `GenericPackager`, the generic feed and verified file downloads that
   never send the token to the storage.
 - `sreg composer|npm|cargo|nuget publish` wired to the publish flow with `--version`,
-  `--path`, `--dry-run`, `--oidc` and `--oidc-project` (`--tag` for npm); packaging for npm,
-  cargo and nuget is not implemented yet.
+  `--tag-prefix`, `--path`, `--dry-run`, `--skip-existing`, `--oidc` and
+  `--oidc-project` (`--tag` for npm); packaging for npm, cargo and nuget is not
+  implemented yet.
 - Composer packaging (`sreg composer publish`): the name from `composer.json`, the
-  version from `--version` or the tag of `HEAD` (`v1.2.3` → `1.2.3`; releases and
-  `alpha`/`beta`/`rc` prereleases only, `dev-*` rejected), the archive from
-  `git archive HEAD` honouring `export-ignore` (the committed `composer.json` must match
-  the one on disk) or, outside git, a deterministic zip of the directory without
-  `vendor/` and `.git`; uploaded as `<package>-<version>.zip` with `composer.json` as the
-  manifest.
+  version from `--version` or the release tag on `HEAD` (`v1.2.3` → `1.2.3`; releases
+  and `alpha`/`beta`/`rc` prereleases only, `dev-*` rejected), the archive from
+  `git archive HEAD:<path>` honouring `export-ignore`, so a package anywhere in a
+  repository becomes the archive root (the committed `composer.json` must match the one
+  on disk), or, outside git, a deterministic zip of the directory without `vendor/` and
+  `.git`; uploaded as `<package>-<version>.zip` with `composer.json` as the manifest.
+- Release tag selection shared by all packagers (`sreg_core::git`): exactly one tag
+  `v<semver>` on `HEAD`, or `<prefix><semver>` with `--tag-prefix <prefix>`.
+- `--skip-existing` on every publish command: an already published version (or appended
+  file) exits with `0` and reports `{ "skipped": true, ... }` with `--json`.
+- Arguments after `--` on `sreg npm|cargo|nuget publish` are passed verbatim to the
+  packaging tool; composer and generic publishing reject them.
 - `CommandRunner` abstraction for packagers that run external tools, and temporary work
   directories owned by the packages they belong to.
 - `sreg generic publish` and `sreg generic get`.
@@ -47,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cargo features `composer`, `npm`, `cargo`, `nuget` and `generic` (all on by default).
 - CI workflow running fmt, clippy, tests, an MSRV check, a single-ecosystem build and
   release builds.
+
+### Changed
+
+- The OIDC project of the publish commands and of `sreg generic get` is now
+  `--oidc-project` (`sreg nuget publish` will use `--project` for the `.csproj`);
+  `sreg auth` keeps `--project`.
 
 ### Fixed
 

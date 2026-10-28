@@ -24,11 +24,11 @@ repository.
 
 | Command | What it does |
 | --- | --- |
-| `sreg composer publish [--version <v>] [--path .]` | Archives the directory (`git archive HEAD`, honouring `export-ignore`, falling back to a zip of the directory without `vendor/` and `.git/`) and reads `composer.json`. The version comes from `--version` or the git tag of `HEAD` (`v1.2.3` → `1.2.3`); it must be semver with an optional `alpha`, `beta` or `rc` prerelease, `dev-*` versions are rejected. See [Publishing a Composer package](#publishing-a-composer-package). |
-| `sreg npm publish [--version <v>] [--tag <t>] [--path .]` | Runs `npm pack --json --pack-destination <tmp>` and reads the name, version and `package.json` from the tarball. `--version` is written into the manifest before packing. |
-| `sreg cargo publish [--version <v>] [--path .] [-- <args>]` | Runs `cargo package --no-verify --allow-dirty` (extra arguments are passed through) and reads the `.crate` file and metadata from `cargo metadata`. `--version` is written into the manifest before packaging. |
-| `sreg nuget publish [--version <v>] [--path .]` | Runs `dotnet pack` and reads the `.nuspec` from the `.nupkg`. `--version` is written into the manifest before packing. |
-| `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... [--meta-file <json>] [--spec <files.json>] [--no-append]` | Publishes files as one version of a generic package. `--label` applies to every file; `--spec` lists files with their own labels instead. Files are appended to an already published version (within the registry's append window) unless `--no-append` is given. |
+| `sreg composer publish [--version <v> \| --tag-prefix <p>] [--path .]` | Archives the package directory `--path` (`git archive HEAD:<path>`, honouring `export-ignore`, falling back to a zip of the directory without `vendor/` and `.git/`) and reads its `composer.json`. The version comes from `--version` or the release tag on `HEAD` (`v1.2.3` → `1.2.3`, or `<prefix>1.2.3` with `--tag-prefix`); it must be semver with an optional `alpha`, `beta` or `rc` prerelease, `dev-*` versions are rejected. Arguments after `--` are rejected. See [Publishing a Composer package](#publishing-a-composer-package). |
+| `sreg npm publish [--version <v>] [--tag <t>] [--path .] [-- <npm args>]` | Runs `npm pack --json --pack-destination <tmp>` (arguments after `--` are passed through verbatim) and reads the name, version and `package.json` from the tarball. `--version` is written into the manifest before packing. |
+| `sreg cargo publish [--version <v>] [--path .] [-- <cargo args>]` | Runs `cargo package --no-verify --allow-dirty` (arguments after `--` are passed through verbatim, e.g. `-- --features ssl --locked`) and reads the `.crate` file and metadata from `cargo metadata`. `--version` is written into the manifest before packaging. |
+| `sreg nuget publish [--version <v>] [--path .] [-- <dotnet args>]` | Runs `dotnet pack` (arguments after `--` are passed through verbatim) and reads the `.nuspec` from the `.nupkg`. `--version` is written into the manifest before packing. |
+| `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... [--meta-file <json>] [--spec <files.json>] [--no-append]` | Publishes files as one version of a generic package. `--label` applies to every file; `--spec` lists files with their own labels instead. Files are appended to an already published version (within the registry's append window) unless `--no-append` is given. Arguments after `--` are rejected. |
 | `sreg generic get <name> [<version>\|latest] [--label k=v]... [--out <dir>] [--prerelease]` | Downloads the files of a version matching the labels into `--out` after verifying size and SHA-256 and prints their paths; `--json` prints the feed entry without downloading. |
 | `sreg whoami` | Shows the identity and grants of the current token (`GET /api/v1/whoami`). |
 | `sreg auth <composer\|npm\|cargo\|nuget> [--oidc --project <p>] [--write <file>] [--registry-name <n>]` | Writes credentials to `auth.json`, `.npmrc`, `credentials.toml` or `nuget.config`, or prints them for the environment (e.g. as `COMPOSER_AUTH`, or a `dotnet nuget add source` command). With `--oidc`, inside a GitHub Actions job with `id-token: write`, it fetches a JWT for the registry and builds a `<project>:gh.<jwt>` token; without it, it uses `REGISTRY_TOKEN`. See [`docs/cli-auth.md`](docs/cli-auth.md). |
@@ -37,8 +37,14 @@ repository.
 Every publish command computes the SHA-256 digest and size of each file, calls `init`,
 uploads every file with `PUT` (3 attempts with backoff; a new `init` when the presigned
 URLs expire) and calls `commit`. All of them accept `--dry-run` (stop after `init`),
-`--oidc` and `--oidc-project <p>` (authenticate with a GitHub Actions OIDC token for the
-project instead of `REGISTRY_TOKEN`; `sreg generic get` accepts them too).
+`--skip-existing` (when the version, or an appended file, is already published, print
+`version already published, skipping` and exit with `0` instead of `2`; with `--json`
+the output is `{ "skipped": true, "eco", "name", "version" }`), and `--oidc` with
+`--oidc-project <p>` (authenticate with a GitHub Actions OIDC token for the project
+instead of `REGISTRY_TOKEN`; `sreg generic get` accepts them too; `sreg auth` calls the
+project `--project`). The composer, npm, cargo and nuget publish commands also accept
+`--tag-prefix <p>` instead of `--version`: the version is then taken from the tag on
+`HEAD` that starts with the prefix.
 
 Global options: `--registry <url>`, `--token <token>`, `--json` (machine-readable
 output only on stdout) and `-v`/`--verbose` (logs of `sreg` itself to stderr; tokens
@@ -46,28 +52,36 @@ and presigned URLs are never logged).
 
 ## Publishing a Composer package
 
-Tag the release and publish from the package directory (or point `--path` at it):
+Tag the release and publish from the package directory, or from anywhere with `--path`:
 
 ```
 git tag v1.2.3
 sreg composer publish                    # publishes acme/sdk 1.2.3 from the tag
 sreg composer publish --version 1.2.4    # or name the version explicitly
 sreg composer publish --dry-run          # let the registry check everything, upload nothing
+
+# a repository with several packages, tagged sdk/v1.2.3, client/v0.4.0, ...
+sreg composer publish --path packages/sdk --tag-prefix sdk/v
 ```
 
 - **Name**: `name` in `composer.json` is required and must be a valid Composer name
   (`vendor/package` in lower case).
-- **Version**: without `--version`, the tag pointing at `HEAD` is used
-  (`git describe --exact-match --tags HEAD`); a leading `v` is dropped, so both `v1.2.3`
-  and `1.2.3` give `1.2.3`. An untagged `HEAD` without `--version` is an error. Versions
-  are `MAJOR.MINOR.PATCH`, optionally followed by `-alpha`, `-beta` or `-rc` and a number
+- **Version**: without `--version`, the release tag pointing at `HEAD`
+  (`git tag --points-at HEAD`) is used: a tag `v<semver>` (`v1.2.3` → `1.2.3`), or with
+  `--tag-prefix <p>` a tag `<p><semver>` (`--tag-prefix sdk/v`: `sdk/v1.2.3` → `1.2.3`;
+  `--tag-prefix ""` for bare `1.2.3` tags). Other tags are ignored. No such tag, or more
+  than one on `HEAD`, is an error; so is combining `--version` with `--tag-prefix`.
+  Versions are `MAJOR.MINOR.PATCH`, optionally followed by `-alpha`, `-beta` or `-rc` and a number
   (`1.0.0-rc1`, `1.0.0-beta.2`); `dev-*` branches, other prerelease labels and build
   metadata are rejected. If `composer.json` declares a `version`, it must be the one being
   published; usually it is best left out.
-- **Archive**: inside a git repository, the archive is `git archive HEAD`: only committed
-  files are published and paths marked `export-ignore` in `.gitattributes` are left out.
-  `composer.json` must be committed and equal to the one on disk. A package in a
-  subdirectory of a repository is archived from that subdirectory. Keep development
+- **Archive**: inside a git repository, the archive is `git archive HEAD:<path>`, where
+  `<path>` is the package directory relative to the repository root: the package
+  directory becomes the root of the archive, only committed files are published and
+  paths marked `export-ignore` are left out. Put the `export-ignore` rules into the
+  package directory's own `.gitattributes` (rules for the subdirectory in the
+  repository's top-level `.gitattributes` do not apply to a `HEAD:<path>` archive).
+  `composer.json` must be committed and equal to the one on disk. Keep development
   files out of the archive like this:
 
   ```
@@ -122,7 +136,7 @@ In CI, pass both as environment variables from repository secrets.
 | --- | --- |
 | `0` | Success. |
 | `1` | Generic error (including invalid usage). |
-| `2` | Already published: the version exists (`409 version_exists`), or a file being appended exists (`409 file_exists`). |
+| `2` | Already published: the version exists (`409 version_exists`), or a file being appended exists (`409 file_exists`). With `--skip-existing` this is `0`. |
 | `3` | This client is too old for the registry (`426`); the message names the minimum version and links to the releases. |
 
 ## Building a smaller binary
