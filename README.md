@@ -35,7 +35,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-re
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.ps1 | iex"
 ```
 
-From source, with Rust 1.85 or newer:
+From source, with Rust 1.88 or newer:
 
 ```
 cargo install --git https://github.com/kduma-OSS/serverless-registry-cli --tag v0.1.0 --locked sreg-cli

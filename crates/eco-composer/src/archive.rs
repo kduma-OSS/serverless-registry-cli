@@ -105,7 +105,12 @@ pub(crate) fn read_prebuilt_composer_json(path: &Path) -> Result<Value, Error> {
         let mut entry = archive
             .by_index(index)
             .map_err(|err| invalid(err.to_string()))?;
-        names.push(entry.name().to_owned());
+        names.push(
+            entry
+                .name()
+                .map_err(|err| invalid(err.to_string()))?
+                .into_owned(),
+        );
         std::io::copy(&mut entry, &mut std::io::sink()).map_err(|err| invalid(err.to_string()))?;
     }
     let manifest_name = if names.iter().any(|name| name == "composer.json") {

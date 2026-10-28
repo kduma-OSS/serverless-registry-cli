@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `password` and `replaces` fields, the one-time `login` reveal of a created secret, and
   `Client::describe_secret` (`PATCH …/secrets/<id>`).
 
+### Security
+
+- Updated `time` (0.3.55, RUSTSEC-2026-0009) and `zip` (9.1.3, RUSTSEC-2026-0367, -0368 and
+  -0369). The CLI only reads and writes archives and never extracts them.
+
+### Changed
+
+- The minimum supported Rust version is now 1.88, which the fixed `time` and `zip` need.
+
 ## [0.1.3] - 2026-10-28
 
 ### Added

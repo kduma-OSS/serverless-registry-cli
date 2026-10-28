@@ -1,5 +1,6 @@
 //! Reading the `.nuspec` of a `.nupkg` into the version's manifest.
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -107,8 +108,9 @@ pub fn read_from_nupkg(path: &Path) -> Result<Nuspec, Error> {
     })?;
     let names: Vec<String> = archive
         .file_names()
+        .flatten()
         .filter(|name| !name.contains('/') && name.to_ascii_lowercase().ends_with(".nuspec"))
-        .map(str::to_owned)
+        .map(Cow::into_owned)
         .collect();
     let name = match names.as_slice() {
         [name] => name,
