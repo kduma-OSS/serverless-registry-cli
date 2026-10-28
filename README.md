@@ -590,6 +590,15 @@ cargo test --workspace
 
 See [`AGENTS.md`](AGENTS.md) for the workspace layout and contribution rules.
 
+## Releasing
+
+Releases are cut from `main` with the manual **Bump and release** workflow
+(`.github/workflows/bump-and-release.yml`): it computes the next version (`prerelease`,
+`patch`, `minor`, `custom`, …), updates `Cargo.toml`, `Cargo.lock`, `action/VERSION` and
+`CHANGELOG.md`, commits and tags `v<version>`, and starts the cargo-dist `Release`
+workflow. Tags must match the package version; use the Bump and release workflow rather
+than tagging by hand. See [`docs/releasing.md`](docs/releasing.md).
+
 ## License
 
 MIT, see [`LICENSE`](LICENSE).
