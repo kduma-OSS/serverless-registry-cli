@@ -18,6 +18,11 @@ impl Output {
         Output { json }
     }
 
+    /// Whether `--json` is set.
+    pub fn is_json(&self) -> bool {
+        self.json
+    }
+
     /// Prints `value` as pretty JSON on stdout.
     pub fn json<T: Serialize + ?Sized>(&self, value: &T) -> anyhow::Result<()> {
         let mut stdout = std::io::stdout().lock();

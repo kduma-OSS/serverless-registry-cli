@@ -70,6 +70,12 @@ pub enum Command {
         command: NugetCommand,
     },
 
+    /// Publish and download generic files
+    Generic {
+        #[command(subcommand)]
+        command: GenericCommand,
+    },
+
     /// Show the identity and grants of the current token
     Whoami,
 
@@ -96,6 +102,12 @@ impl Command {
             Command::Nuget {
                 command: NugetCommand::Publish(_),
             } => "nuget publish",
+            Command::Generic {
+                command: GenericCommand::Publish(_),
+            } => "generic publish",
+            Command::Generic {
+                command: GenericCommand::Get(_),
+            } => "generic get",
             Command::Whoami => "whoami",
             Command::Auth(_) => "auth",
             Command::Version => "version",
@@ -189,6 +201,90 @@ pub enum NugetCommand {
 pub struct NugetPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
+}
+
+#[derive(Subcommand)]
+pub enum GenericCommand {
+    /// Publish files as one version of a generic package
+    Publish(GenericPublishArgs),
+
+    /// Download the files of a generic package version
+    Get(GenericGetArgs),
+}
+
+#[derive(Args)]
+pub struct GenericPublishArgs {
+    /// Package name: [<group>/]<name>, lower case
+    pub name: String,
+
+    /// Version to publish (semver, e.g. 1.2.0 or 1.3.0-rc.1)
+    #[arg(id = "package_version", value_name = "VERSION")]
+    pub version: String,
+
+    /// Files to publish; each one is published under its file name
+    #[arg(
+        value_name = "FILE",
+        required_unless_present = "spec",
+        conflicts_with = "spec"
+    )]
+    pub files: Vec<PathBuf>,
+
+    /// Label applied to every file, e.g. os=linux (repeatable)
+    #[arg(long = "label", value_name = "KEY=VALUE", conflicts_with = "spec")]
+    pub labels: Vec<String>,
+
+    /// Metadata entry of the version, as a string (repeatable)
+    #[arg(long = "meta", value_name = "KEY=VALUE")]
+    pub meta: Vec<String>,
+
+    /// JSON object with the metadata of the version; --meta entries override its keys
+    #[arg(long, value_name = "FILE")]
+    pub meta_file: Option<PathBuf>,
+
+    /// JSON file listing the files with their own labels:
+    /// [{"path": "...", "labels": {"os": "linux"}}, ...]
+    #[arg(long, value_name = "FILE")]
+    pub spec: Option<PathBuf>,
+
+    /// Add the files to an already published version (within the registry's append window)
+    #[arg(long)]
+    pub append: bool,
+
+    /// Stop after the registry has accepted the upload declaration (`init`)
+    #[arg(long)]
+    pub dry_run: bool,
+
+    #[command(flatten)]
+    pub oidc: OidcArgs,
+}
+
+#[derive(Args)]
+pub struct GenericGetArgs {
+    /// Package name: [<group>/]<name>
+    pub name: String,
+
+    /// Version to download, or `latest`
+    #[arg(
+        id = "package_version",
+        value_name = "VERSION",
+        default_value = "latest"
+    )]
+    pub version: String,
+
+    /// Only files with this label, e.g. os=linux (repeatable; all must match)
+    #[arg(long = "label", value_name = "KEY=VALUE")]
+    pub labels: Vec<String>,
+
+    /// Directory to write the files to
+    #[arg(long, value_name = "DIR", default_value = ".")]
+    pub out: PathBuf,
+
+    /// With `latest`: consider prerelease versions too
+    #[arg(long)]
+    pub prerelease: bool,
+
+    #[command(flatten)]
+    pub oidc: OidcArgs,
 }
 
 #[derive(Args)]
@@ -313,6 +409,60 @@ mod tests {
             cli.global.registry.map(String::from).as_deref(),
             Some("https://packages.example.com/")
         );
+    }
+
+    #[test]
+    fn generic_publish_takes_files_or_a_spec() {
+        let cli = Cli::try_parse_from([
+            "sreg",
+            "generic",
+            "publish",
+            "tools/cli",
+            "1.0.0",
+            "a.zip",
+            "b.zip",
+            "--label",
+            "os=linux",
+            "--meta",
+            "commit=abc",
+        ])
+        .unwrap();
+        let Command::Generic {
+            command: GenericCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected generic publish");
+        };
+        assert_eq!(args.version, "1.0.0");
+        assert_eq!(args.files, [PathBuf::from("a.zip"), PathBuf::from("b.zip")]);
+        assert_eq!(args.labels, ["os=linux"]);
+
+        assert!(Cli::try_parse_from(["sreg", "generic", "publish", "cli", "1.0.0"]).is_err());
+        assert!(Cli::try_parse_from([
+            "sreg", "generic", "publish", "cli", "1.0.0", "a.zip", "--spec", "s.json"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "sreg", "generic", "publish", "cli", "1.0.0", "--spec", "s.json", "--label", "a=b"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "sreg", "generic", "publish", "cli", "1.0.0", "--spec", "s.json"
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn generic_get_defaults_to_latest_in_the_current_directory() {
+        let cli = Cli::try_parse_from(["sreg", "generic", "get", "tools/cli"]).unwrap();
+        let Command::Generic {
+            command: GenericCommand::Get(args),
+        } = cli.command
+        else {
+            panic!("expected generic get");
+        };
+        assert_eq!(args.version, "latest");
+        assert_eq!(args.out, PathBuf::from("."));
     }
 
     #[test]

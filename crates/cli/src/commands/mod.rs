@@ -1,11 +1,14 @@
 //! Command implementations.
 
 mod auth;
+mod generic;
 mod publish;
 mod version;
 mod whoami;
 
-use crate::cli::{CargoCommand, Cli, Command, ComposerCommand, NpmCommand, NugetCommand};
+use crate::cli::{
+    CargoCommand, Cli, Command, ComposerCommand, GenericCommand, NpmCommand, NugetCommand,
+};
 use crate::output::Output;
 
 /// Runs the parsed command.
@@ -51,6 +54,12 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             )
             .await
         }
+        Command::Generic {
+            command: GenericCommand::Publish(args),
+        } => generic::publish(global, &out, args).await,
+        Command::Generic {
+            command: GenericCommand::Get(args),
+        } => generic::get(global, &out, args).await,
         Command::Nuget {
             command: NugetCommand::Publish(args),
         } => {
