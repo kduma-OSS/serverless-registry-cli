@@ -46,9 +46,9 @@ docs/            # specification, API contract, release process, `sreg auth` des
                      # its post-announce job release-action.yml
 ```
 
-The composite GitHub Action is not part of this repository: it lives in
-[`kduma-OSS/serverless-registry-publish-action`](https://github.com/kduma-OSS/serverless-registry-publish-action)
-and is released there (see `docs/releasing.md`).
+The composite GitHub Actions (`publish`, `setup`, `auth`, `get`) are not part of this repository: they live in
+[`kduma-OSS/serverless-registry-action`](https://github.com/kduma-OSS/serverless-registry-action)
+and are released there (see `docs/releasing.md`).
 
 Design rules that must hold:
 

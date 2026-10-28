@@ -505,10 +505,10 @@ Every publish command: computes the sha256 and size of every file, calls `init`,
 
 **CLI ↔ Worker compatibility**: the CLI sends `X-Client-Version: <semver>`, the Worker answers with `X-Min-Client-Version`; CLI too old → a message with a link to the release and exit code `3`. The API is versioned in the path (`/api/v1`); the next Worker version keeps the previous one for at least one minor release.
 
-**Distribution**: GitHub Releases through `cargo-dist` (linux-gnu/musl, macOS arm64/x86\_64, Windows; checksums), plus a GitHub Action `kduma-OSS/serverless-registry-publish-action@v1` (composite: downloads the binary at a pinned version, verifies the checksum, runs `sreg <eco> publish`) (editorial note: the action lives in its own repository, `kduma-OSS/serverless-registry-publish-action`, and is versioned independently of the CLI; each action release names the `sreg` release it installs by default, `@v1` follows the latest 1.x release, and a stable CLI release triggers a patch release of the action with the new default). Example in the README:
+**Distribution**: GitHub Releases through `cargo-dist` (linux-gnu/musl, macOS arm64/x86\_64, Windows; checksums), plus a GitHub Action `kduma-OSS/serverless-registry-action/publish@v1` (composite: downloads the binary at a pinned version, verifies the checksum, runs `sreg <eco> publish`) (editorial note: the action lives in its own repository, `kduma-OSS/serverless-registry-action` (formerly `serverless-registry-publish-action`), next to the `setup`, `auth` and `get` actions, and is versioned independently of the CLI; each action release names the `sreg` release it installs by default, `@v1` follows the latest 1.x release, and a stable CLI release triggers a patch release of the action with the new default). Example in the README:
 
 ```yaml
-- uses: kduma-OSS/serverless-registry-publish-action@v1
+- uses: kduma-OSS/serverless-registry-action/publish@v1
   with:
     ecosystem: composer
     registry: https://packages.example.com
@@ -603,7 +603,7 @@ wrangler.jsonc  CHANGELOG.md  README.md
 
 **`serverless-registry-cli`** – the workspace from the CLI section (`crates/core`, `crates/eco-*`, `crates/cli`), `dist-workspace.toml` for cargo-dist.
 
-**`serverless-registry-publish-action`** – the composite GitHub Action (`action.yml` at the root, the install and publish scripts, its own release workflow and changelog).
+**`serverless-registry-action`** (formerly `serverless-registry-publish-action`) – the composite GitHub Actions `publish`, `setup`, `auth` and `get` (one `action.yml` per directory, the install, publish, auth and get scripts, its own release workflow and changelog; the root `action.yml` is a deprecated alias of `publish` in v1).
 
 **Rollout order**
 
