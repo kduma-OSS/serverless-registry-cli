@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-28
+
 ### Added
 
 - Cargo workspace with the `sreg-core`, `sreg-eco-composer`, `sreg-eco-npm`,
@@ -93,6 +95,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by default).
 - CI workflow running fmt, clippy, tests, an MSRV check, a build and the tests of every
   single ecosystem feature (and of none), and release builds.
+- Releases through cargo-dist (`dist-workspace.toml`, `.github/workflows/release.yml`):
+  `sreg` archives with SHA-256 checksums for macOS (arm64, x86_64), Linux (x86_64 glibc
+  and musl, arm64) and Windows (x86_64), and shell and PowerShell installers.
+- Composite GitHub Action (`action/`, `kduma-OSS/serverless-registry-cli/action@v1`):
+  installs the checksum-verified `sreg` release named in `action/VERSION` (or
+  `sreg-version`) on Linux, macOS and Windows runners and runs
+  `sreg <ecosystem> publish` with a token or, without one, with OIDC; inputs for every
+  ecosystem's options, `--skip-existing` by default, and the outputs `name`, `version`,
+  `url` and `skipped`.
+- Installation, GitHub Action and compatibility documentation, and the release process
+  (`docs/releasing.md`).
 
 ### Changed
 
@@ -114,4 +127,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `/` encoded as `%2F` (`/generic/acme%2Fplugin-foo/latest`), as the API contract
   requires.
 
-[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/commits/main
+[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/kduma-OSS/serverless-registry-cli/releases/tag/v0.1.0
