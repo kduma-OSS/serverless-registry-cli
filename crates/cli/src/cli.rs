@@ -191,7 +191,8 @@ pub struct OidcArgs {
 pub struct PublishArgs {
     /// Version to publish (composer and swift: instead of the release tag on HEAD, e.g.
     /// v1.2.3 -> 1.2.3; npm, cargo and nuget: written into the manifest before packaging;
-    /// maven: selects the version directory)
+    /// maven: selects the version directory). With --archive it only has to agree with
+    /// the archive (composer: it is the version when composer.json declares none)
     #[arg(long = "version", id = "package_version", value_name = "VERSION")]
     pub version: Option<String>,
 
@@ -226,6 +227,15 @@ pub struct ComposerPublishArgs {
     #[arg(long, value_name = "DIR", default_value = ".")]
     pub path: PathBuf,
 
+    /// Publish this zip, built earlier, byte for byte instead of archiving a directory;
+    /// the package and its dependencies are read from the composer.json inside it
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["path", "tag_prefix", "passthrough"]
+    )]
+    pub archive: Option<PathBuf>,
+
     #[command(flatten)]
     pub publish: PublishArgs,
 
@@ -250,6 +260,15 @@ pub struct NpmPublishArgs {
     /// Distribution tag (defaults to `latest`, or `next` for prereleases)
     #[arg(long, value_name = "TAG")]
     pub tag: Option<String>,
+
+    /// Publish this tarball, built earlier, byte for byte instead of running `npm pack`;
+    /// the package and its dependencies are read from the package.json inside it
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["tag_prefix", "workspace", "npm_args"]
+    )]
+    pub archive: Option<PathBuf>,
 
     /// Publish this workspace (a name or a path) of the project in the current
     /// directory: `npm pack -w <WORKSPACE>`
@@ -280,6 +299,22 @@ pub struct CargoPublishArgs {
     #[arg(long, value_name = "CRATE")]
     pub package: Option<String>,
 
+    /// Publish this .crate, built earlier, byte for byte instead of running
+    /// `cargo package`; the crate and its dependencies are read from the Cargo.toml
+    /// inside it
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["tag_prefix", "package", "cargo_args"]
+    )]
+    pub archive: Option<PathBuf>,
+
+    /// With --archive: index URL of the retired registry the crate was built for, e.g.
+    /// sparse+https://old.example.com/cargo/index/. Its dependencies are described as
+    /// dependencies of this registry; the archive is not changed
+    #[arg(long, value_name = "INDEX_URL", requires = "archive")]
+    pub source_registry_index: Option<String>,
+
     /// Extra arguments passed verbatim to `cargo package`
     #[arg(last = true, value_name = "CARGO_ARGS")]
     pub cargo_args: Vec<std::ffi::OsString>,
@@ -306,6 +341,17 @@ pub struct NugetPublishArgs {
     /// Do not publish the .snupkg symbols package that `dotnet pack` produced
     #[arg(long)]
     pub no_symbols: bool,
+
+    /// Publish this .nupkg, built earlier, byte for byte instead of running
+    /// `dotnet pack`; the package and its dependencies are read from the .nuspec inside
+    /// it (it is uploaded as <id>.<version>.nupkg in lower case, as the registry
+    /// requires; the file itself is not renamed)
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["tag_prefix", "nuget_project", "no_symbols", "dotnet_args"]
+    )]
+    pub archive: Option<PathBuf>,
 
     /// Extra arguments passed verbatim to `dotnet pack`
     #[arg(last = true, value_name = "DOTNET_ARGS")]
