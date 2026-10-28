@@ -96,6 +96,17 @@ pub struct PackageOptions {
     pub extra_args: Vec<String>,
 }
 
+/// Options of publishing an archive that was built earlier (`--archive`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArchiveOptions {
+    /// The archive to publish; its bytes are uploaded unchanged.
+    pub path: PathBuf,
+    /// Version the archive is expected to carry, or, for a Composer archive whose
+    /// `composer.json` declares none, the version to publish it as. The archive is
+    /// never rewritten.
+    pub version: Option<String>,
+}
+
 /// One file of a version, ready to be uploaded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageFile {
@@ -212,6 +223,17 @@ pub trait Packager {
 
     /// Packages the project described by `opts`.
     fn package(&self, opts: &PackageOptions) -> Result<Package, Error>;
+
+    /// Describes an archive built earlier from its own manifest, without unpacking and
+    /// repacking it, running a packaging tool or looking at a git checkout.
+    ///
+    /// The default refuses: only composer, npm, cargo and nuget publish archives.
+    fn package_archive(&self, _opts: &ArchiveOptions) -> Result<Package, Error> {
+        Err(Error::InvalidInput(format!(
+            "publishing a prebuilt archive is not supported for {}",
+            self.ecosystem()
+        )))
+    }
 }
 
 #[cfg(test)]
