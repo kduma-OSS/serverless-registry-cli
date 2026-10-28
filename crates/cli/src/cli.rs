@@ -154,10 +154,6 @@ pub struct OidcArgs {
 ))]
 #[derive(Args)]
 pub struct PublishArgs {
-    /// Directory of the project to publish
-    #[arg(long, value_name = "DIR", default_value = ".")]
-    pub path: PathBuf,
-
     /// Version to publish (composer: instead of the release tag on HEAD, e.g. v1.2.3 ->
     /// 1.2.3; npm, cargo and nuget: written into the manifest before packaging)
     #[arg(long = "version", id = "package_version", value_name = "VERSION")]
@@ -190,6 +186,10 @@ pub enum ComposerCommand {
 #[cfg(feature = "composer")]
 #[derive(Args)]
 pub struct ComposerPublishArgs {
+    /// Directory of the package to publish
+    #[arg(long, value_name = "DIR", default_value = ".")]
+    pub path: PathBuf,
+
     #[command(flatten)]
     pub publish: PublishArgs,
 
@@ -419,7 +419,7 @@ mod tests {
             panic!("expected composer publish");
         };
         assert_eq!(args.publish.version.as_deref(), Some("1.2.3"));
-        assert_eq!(args.publish.path, PathBuf::from("."));
+        assert_eq!(args.path, PathBuf::from("."));
     }
 
     #[cfg(all(
@@ -437,8 +437,6 @@ mod tests {
                 "publish",
                 "--version",
                 "2.0.0",
-                "--path",
-                "pkg",
                 "--dry-run",
                 "--oidc",
                 "--oidc-project",
@@ -457,6 +455,12 @@ mod tests {
             .is_err());
         }
         assert!(Cli::try_parse_from(["sreg", "cargo", "publish", "--tag", "next"]).is_err());
+        // Only composer packs a directory itself; the others work in the current
+        // directory and select the package with their own flags.
+        assert!(Cli::try_parse_from(["sreg", "composer", "publish", "--path", "pkg"]).is_ok());
+        for eco in ["npm", "cargo", "nuget"] {
+            assert!(Cli::try_parse_from(["sreg", eco, "publish", "--path", "pkg"]).is_err());
+        }
     }
 
     #[cfg(feature = "composer")]

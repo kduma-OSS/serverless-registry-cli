@@ -47,6 +47,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 &out,
                 &packager,
                 &args.publish,
+                &args.path,
                 None,
                 &args.passthrough,
             )
@@ -62,6 +63,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 &out,
                 &packager,
                 &args.publish,
+                std::path::Path::new("."),
                 args.tag.clone(),
                 &args.npm_args,
             )
@@ -77,6 +79,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 &out,
                 &packager,
                 &args.publish,
+                std::path::Path::new("."),
                 None,
                 &args.cargo_args,
             )
@@ -100,6 +103,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 &out,
                 &packager,
                 &args.publish,
+                std::path::Path::new("."),
                 None,
                 &args.dotnet_args,
             )

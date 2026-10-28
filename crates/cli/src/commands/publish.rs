@@ -23,7 +23,7 @@ use crate::cli::{GlobalArgs, OidcArgs};
 use crate::context;
 use crate::output::{table, Output};
 
-/// Packages the project with `packager` and publishes it.
+/// Packages the project in `path` with `packager` and publishes it.
 #[cfg(any(
     feature = "composer",
     feature = "npm",
@@ -35,6 +35,7 @@ pub async fn run_packager(
     out: &Output,
     packager: &dyn Packager,
     args: &PublishArgs,
+    path: &std::path::Path,
     tag: Option<String>,
     extra_args: &[std::ffi::OsString],
 ) -> anyhow::Result<()> {
@@ -50,17 +51,15 @@ pub async fn run_packager(
         })
         .collect::<anyhow::Result<Vec<String>>>()?;
     let opts = PackageOptions {
-        path: args.path.clone(),
+        path: path.to_path_buf(),
         version: args.version.clone(),
         tag_prefix: args.tag_prefix.clone(),
         tag: tag.clone(),
         extra_args,
     };
     let package = packager.package(&opts).with_context(|| {
-        format!(
-            "failed to package the {eco} project in {}",
-            args.path.display()
-        )
+        let dir = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        format!("failed to package the {eco} project in {}", dir.display())
     })?;
     // Notes go to stderr, so that `--json` output stays a single document.
     for note in &package.notes {
