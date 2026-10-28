@@ -36,8 +36,9 @@ the project, stored as a repository or environment secret.
 
 Without `token`, the action authenticates with the job's GitHub Actions OIDC token
 (`sreg … publish --oidc`). No secret is needed, but the job must be allowed to request
-the token, and the registry must have a `gh` credential trusting the repository (see
-the Worker's documentation on GitHub Actions credentials):
+the token, and the registry must have a `publish` credential with a `gh` secret
+trusting the repository (see
+[A publish credential for GitHub Actions](https://github.com/kduma-OSS/serverless-registry-worker/blob/main/docs/deployment.md#a-publish-credential-for-github-actions-oidc-no-secret) in the Worker's deployment guide):
 
 ```yaml
 jobs:

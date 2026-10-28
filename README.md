@@ -15,7 +15,9 @@ tokens. Administration (credentials, yank, delete) is done in the registry's web
 
 The registry itself lives in the
 [`serverless-registry-worker`](https://github.com/kduma-OSS/serverless-registry-worker)
-repository.
+repository; its
+[deployment guide](https://github.com/kduma-OSS/serverless-registry-worker/blob/main/docs/deployment.md)
+covers setting it up and creating credentials.
 
 ## Install
 
@@ -435,7 +437,9 @@ for every input and examples for each ecosystem and for monorepos.
 
 Without the [action](#github-action), install `sreg` in the job and call it directly.
 Publish on tag pushes; with `--oidc` no long-lived secret is needed (the job needs
-`id-token: write`):
+`id-token: write`, and the registry a `publish` credential with a `gh` secret for the
+repository, see
+[A publish credential for GitHub Actions](https://github.com/kduma-OSS/serverless-registry-worker/blob/main/docs/deployment.md#a-publish-credential-for-github-actions-oidc-no-secret) in the Worker's deployment guide):
 
 ```yaml
 on:
