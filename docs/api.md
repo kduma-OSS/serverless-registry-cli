@@ -1525,7 +1525,8 @@ publish names every version to approve:
 }
 ```
 
-`scopes` has 1 to `MAX_PUBLISH_SCOPES` entries (default 20, at most 100); `eco` must be enabled, `version` valid for it, and `package` and
+`scopes` has 1 to `MAX_PUBLISH_SCOPES` entries (default 20, at most 100), and the resulting `url`
+may be at most 8000 characters (the signed session, scopes included, is in it); `eco` must be enabled, `version` valid for it, and `package` and
 `version` are returned in their stored form (NuGet and Swift names lower-cased, NuGet versions
 normalised); duplicates are dropped. Response `201`:
 
