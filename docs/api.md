@@ -3,7 +3,10 @@
 This document is the contract between the Worker and the `sreg` CLI (and the admin panel). It
 is the source of truth for the `/api/v1` surface: a client can be implemented from this
 document alone. The native read protocols (`/composer`, `/npm`, `/cargo`) and the panel's
-`/login` and `/logout` are described in [spec.md](spec.md) and are out of scope here.
+`/login` and `/logout` are described in [spec.md](spec.md) and are out of scope here. The
+generic feed (`/generic/…`, section 8) and the NuGet feed (`/nuget/…`, section 9) are not part
+of `/api/v1`, but the CLI and the NuGet clients depend on their exact shape, so they are
+specified here.
 
 Changes to this document must be backwards compatible (new optional request fields, new
 response fields, new endpoints, new error codes) or must introduce `/api/v2`. When a new path
@@ -28,7 +31,8 @@ Worker.
   endpoints whose body is optional) may omit the header and the body entirely; an empty body
   is equivalent to `{}`.
 - Request bodies are limited to 4 MiB; larger bodies are rejected with
-  `413 payload_too_large`.
+  `413 payload_too_large`. An upload (`init`) declares at most 64 files; more are rejected with
+  `400 invalid_request`.
 - Every response carries `Content-Type: application/json; charset=utf-8` and
   `Cache-Control: no-store`.
 - Unknown fields in request bodies are ignored by the Worker, unless an endpoint says
@@ -47,13 +51,13 @@ Worker.
 
 ### 1.3 Path parameters
 
-| Parameter       | Format                                                                                                                                                                                              |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<eco>`         | `composer`, `npm` or `cargo`. Any other value answers `404 not_found`.                                                                                                                              |
-| `<name>`        | Package name, percent-encoded as one path segment: `/` must be sent as `%2F`, `@` may be sent literally or as `%40`. Examples: `acme%2Fsdk` (composer), `%40acme%2Fsdk` (npm), `acme-core` (cargo). |
-| `<version>`     | Exact version string as published, percent-encoded (versions never contain `/`).                                                                                                                    |
-| `<project>`     | A local project slug, `[a-z0-9][a-z0-9-]{1,62}`. A value containing `.` (a provider-backed project) answers `400 invalid_request`.                                                                  |
-| `<hash-prefix>` | 8 to 12 lower-case hexadecimal characters identifying an auth entry (see 6.1).                                                                                                                      |
+| Parameter       | Format                                                                                                                                                                                                                                                                             |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<eco>`         | `composer`, `npm`, `cargo`, `generic` or `nuget`, and only when it is enabled in `ECOSYSTEMS` (1.5). Any other value answers `404 not_found`.                                                                                                                                      |
+| `<name>`        | Package name, percent-encoded as one path segment: `/` must be sent as `%2F`, `@` may be sent literally or as `%40`. Examples: `acme%2Fsdk` (composer), `%40acme%2Fsdk` (npm), `acme-core` (cargo), `acme%2Fplugin-foo` (generic), `Acme.Sdk` (nuget; matched case-insensitively). |
+| `<version>`     | Exact version string as published, percent-encoded (versions never contain `/`); for nuget it is normalised first (5.2).                                                                                                                                                           |
+| `<project>`     | A local project slug, `[a-z0-9][a-z0-9-]{1,62}`. A value containing `.` (a provider-backed project) answers `400 invalid_request`.                                                                                                                                                 |
+| `<hash-prefix>` | 8 to 12 lower-case hexadecimal characters identifying an auth entry (see 6.1).                                                                                                                                                                                                     |
 
 The Worker matches paths on the raw (still percent-encoded) path and decodes each segment
 separately, so `%2F` inside `<name>` never splits the segment.
@@ -69,7 +73,21 @@ The Worker processes an `/api/v1` request in this order and answers with the fir
 4. Authentication → `401 unauthorized`, `503 provider_unavailable`.
 5. Kind check → `403 forbidden`.
 6. Field validation → `400 invalid_request`, `413 payload_too_large`.
-7. Grant check and endpoint logic → `403 forbidden`, `404 not_found`, `409 …`.
+7. Grant check and endpoint logic → `400 upload_incomplete`, `403 forbidden`, `404 not_found`,
+   `409 …`.
+
+### 1.5 Installation variables
+
+These Worker variables (see the spec, "Deployment, configuration and updates") change what
+the contract allows:
+
+| Variable              | Default                            | Effect                                                                                                                                                                                                                                                 |
+| --------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PUBLIC_URL`          | the request's origin               | base of every URL in responses (`url` fields, `aud` of `gh` tokens)                                                                                                                                                                                    |
+| `ECOSYSTEMS`          | `composer,npm,cargo,generic,nuget` | enabled ecosystems; a disabled one is treated as unknown: `<eco>` paths answer `404 not_found`, `eco` in `init` is `400 invalid_request`, listings omit it and every path of its read protocol (e.g. `/generic/…`, `/nuget/…`) answers `404 not_found` |
+| `MAX_UPLOAD_BYTES`    | `536870912` (512 MiB)              | largest `size` of each file in `init`                                                                                                                                                                                                                  |
+| `APPEND_WINDOW_HOURS` | `24`                               | how long after `published` files may still be appended to a version (6.4.1)                                                                                                                                                                            |
+| `TOKEN_PREFIX`        | empty                              | optional token prefix (2.1)                                                                                                                                                                                                                            |
 
 ## 2. Authentication
 
@@ -137,11 +155,11 @@ do not need that header. The CLI never uses cookies.
 
 Every credential has exactly one kind:
 
-| Kind      | May call                                                                    |
-| --------- | --------------------------------------------------------------------------- |
-| `read`    | `whoami`, package listing (filtered by its grants)                          |
-| `publish` | `whoami`, `publish/init`, `publish/commit` (within its grants)              |
-| `admin`   | `whoami`, package listing (unfiltered), package administration, credentials |
+| Kind      | May call                                                                                     |
+| --------- | -------------------------------------------------------------------------------------------- |
+| `read`    | `whoami`, package listing and generic feed (filtered by its grants)                          |
+| `publish` | `whoami`, `publish/init`, `publish/commit` (within its grants)                               |
+| `admin`   | `whoami`, package listing and generic feed (unfiltered), package administration, credentials |
 
 `GET /api/v1/version` requires no credential. A missing, malformed, unknown, expired or
 otherwise invalid credential answers `401 unauthorized` with
@@ -176,20 +194,23 @@ Every non-2xx response has this body:
 never contain secrets (tokens, hashes, presigned URLs). Clients must treat an unknown `error`
 value according to its HTTP status.
 
-| Code                   | Status | Meaning                                                                                                    |
-| ---------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
-| `invalid_request`      | 400    | Malformed JSON, missing or invalid field, malformed header, constraint that cannot be parsed, and similar. |
-| `unauthorized`         | 401    | No credential, or the credential could not be verified (unknown project, wrong secret, expired, bad JWT).  |
-| `forbidden`            | 403    | Valid credential, but wrong kind, no matching grant, missing `X-Requested-With`, or a protected operation. |
-| `not_found`            | 404    | Unknown path or method, unknown package, version, credential, auth entry or `uploadId`.                    |
-| `version_exists`       | 409    | The version is already published (on `init` and on `commit`).                                              |
-| `upload_mismatch`      | 409    | On `commit`: the staged object is missing or its size or SHA-256 differs from the `init` declaration.      |
-| `credential_exists`    | 409    | `POST /api/v1/credentials` for a project that already exists.                                              |
-| `payload_too_large`    | 413    | Request body over 4 MiB, or `size` in `init` above `MAX_UPLOAD_BYTES`.                                     |
-| `client_too_old`       | 426    | `X-Client-Version` is lower than `X-Min-Client-Version`.                                                   |
-| `rate_limited`         | 429    | Reserved; not emitted in `v1`. If received, wait for `Retry-After` seconds (default 10) and retry.         |
-| `internal_error`       | 500    | Unexpected failure in the Worker.                                                                          |
-| `provider_unavailable` | 503    | The external credential provider of the token's source did not answer. Never falls back to no auth.        |
+| Code                   | Status | Meaning                                                                                                                      |
+| ---------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_request`      | 400    | Malformed JSON, missing or invalid field, malformed header, constraint that cannot be parsed, and similar.                   |
+| `upload_incomplete`    | 400    | On `commit`: at least one declared file is missing from staging (its `PUT` never completed).                                 |
+| `unauthorized`         | 401    | No credential, or the credential could not be verified (unknown project, wrong secret, expired, bad JWT).                    |
+| `forbidden`            | 403    | Valid credential, but wrong kind, no matching grant, missing `X-Requested-With`, or a protected operation.                   |
+| `not_found`            | 404    | Unknown path or method, unknown or disabled ecosystem, unknown package, version, file, credential, auth entry or `uploadId`. |
+| `version_exists`       | 409    | The version is already published (on `init` without `append`, and on `commit`).                                              |
+| `version_closed`       | 409    | `append` to a version whose append window (`APPEND_WINDOW_HOURS`) has passed, or that is yanked.                             |
+| `file_exists`          | 409    | `append` with a file name that already exists in the version.                                                                |
+| `upload_mismatch`      | 409    | On `commit`: the size or SHA-256 of a staged file differs from the `init` declaration.                                       |
+| `credential_exists`    | 409    | `POST /api/v1/credentials` for a project that already exists.                                                                |
+| `payload_too_large`    | 413    | Request body over 4 MiB, or the `size` of a file in `init` above `MAX_UPLOAD_BYTES`.                                         |
+| `client_too_old`       | 426    | `X-Client-Version` is lower than `X-Min-Client-Version`.                                                                     |
+| `rate_limited`         | 429    | Reserved; not emitted in `v1`. If received, wait for `Retry-After` seconds (default 10) and retry.                           |
+| `internal_error`       | 500    | Unexpected failure in the Worker.                                                                                            |
+| `provider_unavailable` | 503    | The external credential provider of the token's source did not answer. Never falls back to no auth.                          |
 
 To avoid leaking the existence of packages, a `read` credential asking for a package it has
 no grant for receives `404 not_found`, not `403`.
@@ -200,7 +221,7 @@ Written as TypeScript for precision; `?` marks an optional field, `| null` a fie
 always present but may be `null`.
 
 ```ts
-type Eco = "composer" | "npm" | "cargo";
+type Eco = "composer" | "npm" | "cargo" | "generic" | "nuget";
 type Kind = "read" | "publish" | "admin";
 
 interface Grant {
@@ -235,12 +256,31 @@ interface Credential {
   grants: Grant[]; // always [] for kind "admin"
 }
 
-interface PackageVersion {
-  version: string;
-  published: string; // RFC 3339
-  yanked: boolean;
+interface PackageFile {
+  name: string; // unique within the version
   size: number;
   sha256: string;
+  role?: string; // composer, npm, cargo, nuget: "archive" or (nuget) "symbols"; absent for generic
+  labels?: Record<string, string>; // generic: always present ({} when none); absent elsewhere
+}
+
+interface PackageVersion {
+  version: string;
+  published: string; // RFC 3339, the first publish of the version (appends do not change it)
+  yanked: boolean;
+  files: PackageFile[]; // in upload order; appended files come last
+}
+
+// Stored at <eco>/pkg/<name>/<version>/manifest.json; no endpoint returns it as a whole.
+interface Manifest {
+  eco: Eco;
+  name: string; // decoded, e.g. "@acme/sdk"; nuget: the id with its original casing
+  version: string; // nuget: normalised (5.2)
+  files: PackageFile[]; // non-empty, unique names
+  published: string; // RFC 3339
+  publishedBy: string; // [<source>.]<project> of the credential that published it
+  yanked: boolean;
+  native: Record<string, unknown>; // the init `manifest` as normalised by the adapter (generic: `meta`)
 }
 
 interface Package {
@@ -254,31 +294,51 @@ The stored KV record (see spec) keeps the full secret hash in `hash`; the API ne
 it and exposes `id` instead. An auth entry is active when `expires` is `null` or in the
 future.
 
+The version manifest is the durable data contract (see spec); package listings (6.6–6.8) and
+the generic feed (section 8) are derived from it. Clients must treat an absent `labels` like
+`{}`.
+
 ### 5.1 Grants
 
-- `eco`: one of the three ecosystems.
+- `eco`: one of the five ecosystems. A grant may name an ecosystem that is disabled in
+  `ECOSYSTEMS`; it takes effect once the ecosystem is enabled.
 - `package`: an exact package name, or a pattern whose only `*` is its last character and
   starts a segment or ends one (`acme/*`, `@acme/*`, `acme-*`). `*` matches any sequence of
   characters that does not contain `/`. The pattern `*` alone matches every package of the
-  ecosystem.
+  ecosystem. For nuget, package ids and patterns are compared case-insensitively.
 - `versions`: a constraint in the ecosystem's syntax (Composer, npm/node-semver, cargo
-  `VersionReq`), or `*` for all versions. A constraint that does not parse is
+  `VersionReq`; generic uses the npm/node-semver syntax; nuget uses NuGet version ranges:
+  `[1.0,2.0)`, `1.0` (= `>=1.0`), `[1.0]`, `(,1.0]`, floating `1.*`), or `*` for all versions.
+  The ecosystem's adapter evaluates it. A constraint that does not parse is
   `400 invalid_request`.
 - A credential without a grant for an ecosystem has no access to it. For `read` a grant means
   "may install", for `publish` "may publish".
 
-CLI shorthand: `eco:package[:versions]`, split at the first two `:`; `versions` defaults to
-`*`. Examples: `composer:acme/*:*`, `npm:@acme/sdk:^2.0`, `cargo:acme-core:>=1.4, <2`
-(quote it in the shell).
+Shorthand: `eco:package[:versions]`, split at the first two `:`; `versions` defaults to `*`.
+Examples: `composer:acme/*:*`, `npm:@acme/sdk:^2.0`, `cargo:acme-core:>=1.4, <2`,
+`generic:acme/*:^1.0`, `nuget:Acme.*:[1.0,2.0)`.
 
 ### 5.2 Versions
 
-All ecosystems accept only semver 2.0.0 versions `MAJOR.MINOR.PATCH[-PRERELEASE]` without a
-leading `v` and without build metadata (`+…` is rejected because Composer cannot represent it
-and cargo ignores it for identity). For composer the prerelease, when present, must be
-`alpha`, `beta` or `rc`, optionally followed by a number with or without a dot
-(`1.0.0-beta.1`, `1.0.0-rc2`), because Composer does not understand other labels. Versions
-are compared as exact strings for immutability.
+The version format is validated by the ecosystem's adapter (`validateVersion`), not by the
+kernel:
+
+- **composer, npm, cargo, generic**: semver 2.0.0 versions `MAJOR.MINOR.PATCH[-PRERELEASE]`
+  without a leading `v` and without build metadata (`+…` is rejected because Composer cannot
+  represent it and cargo ignores it for identity). For composer the prerelease, when present,
+  must be `alpha`, `beta` or `rc`, optionally followed by a number with or without a dot
+  (`1.0.0-beta.1`, `1.0.0-rc2`), because Composer does not understand other labels.
+- **nuget**: NuGet versions: 1 to 4 numeric parts, optionally followed by a SemVer 2.0.0
+  prerelease (`1.2.3-alpha.1`). Build metadata (`+…`) is accepted, ignored and stripped. The
+  CLI sends the version as written; the Worker normalises it and stores and serves only the
+  NuGet normalised form: lower case, leading zeros removed from the numeric parts, at least
+  three parts (`1.2` → `1.2.0`) and a fourth part of `0` removed (`1.2.3.0` → `1.2.3`). For
+  example `01.2.3.0-Beta+abc` becomes `1.2.3-beta`. Package ids are case-insensitive: they are
+  lower-cased in R2 keys and in feed paths, but served with the original casing from the
+  manifest.
+
+Versions are compared as exact strings for immutability (for nuget, the normalised strings, so
+`1.2` and `1.2.0` are the same version).
 
 ## 6. Endpoints
 
@@ -343,24 +403,49 @@ credential). `grants` is `[]` for `admin`.
 
 ### 6.4 `POST /api/v1/publish/init`
 
-Kind `publish`. Validates the declaration, checks the grant and immutability, stores the
-declaration in staging and returns a presigned upload URL.
+Kind `publish`. Validates the declaration, checks the grant and immutability (or the append
+rules, 6.4.1), stores the declaration in staging and returns one presigned upload URL per file.
 
 Request:
 
-| Field      | Type    | Required | Description                                                                                                                  |
-| ---------- | ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `eco`      | string  | yes      | `composer`, `npm` or `cargo`                                                                                                 |
-| `name`     | string  | yes      | package name: composer `vendor/package` (lower case), npm `@scope/name` (scoped names only), cargo crate name                |
-| `version`  | string  | yes      | version, see 5.2                                                                                                             |
-| `file`     | string  | yes      | archive file name, `[A-Za-z0-9._+-]{1,255}`, extension `.zip` (composer), `.tgz` (npm) or `.crate` (cargo)                   |
-| `size`     | integer | yes      | archive size in bytes, `1 ≤ size ≤ MAX_UPLOAD_BYTES` (default 536870912); above → `413 payload_too_large`                    |
-| `sha256`   | string  | yes      | SHA-256 of the archive, 64 lower-case hex characters                                                                         |
-| `manifest` | object  | yes      | ecosystem-native metadata, see below                                                                                         |
-| `tag`      | string  | no       | npm only: dist-tag to point at this version. Default `latest`; for a prerelease version without `tag` the default is `next`. |
+| Field      | Type     | Required | Description                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eco`      | string   | yes      | `composer`, `npm`, `cargo`, `generic` or `nuget`; must be enabled in `ECOSYSTEMS`                                                                                                                                                                                                                                                                                            |
+| `name`     | string   | yes      | package name: composer `vendor/package` (lower case), npm `@scope/name` (scoped names only), cargo crate name, generic `[a-z0-9][a-z0-9._-]*` with an optional single group segment (`acme/plugin-foo`) and without `__` anywhere (R2 keys encode `/` as `__`, so `acme__x` would collide with `acme/x`), nuget the package id as in the `.nuspec` (`[A-Za-z0-9_.-]{1,100}`) |
+| `version`  | string   | yes      | version, see 5.2                                                                                                                                                                                                                                                                                                                                                             |
+| `files`    | object[] | yes      | the files of this upload, see below; 1 to 64 entries, names unique                                                                                                                                                                                                                                                                                                           |
+| `manifest` | object   | yes      | ecosystem-native metadata, or the free-form `meta` for generic; see below                                                                                                                                                                                                                                                                                                    |
+| `tag`      | string   | no       | npm only: dist-tag to point at this version. Default `latest`; for a prerelease version without `tag` the default is `next`.                                                                                                                                                                                                                                                 |
+| `append`   | boolean  | no       | default `false`; `true` adds files to an existing version, generic only (6.4.1)                                                                                                                                                                                                                                                                                              |
 
 `tag` must match `^[a-z][a-z0-9._-]{0,63}$` and must not itself be a valid semver range (for
-example `v1` or `x`); sending it for composer or cargo is `400 invalid_request`.
+example `v1` or `x`); sending it for any ecosystem other than npm is `400 invalid_request`.
+
+Each entry of `files`:
+
+| Field    | Type    | Required | Description                                                                                                                                                                            |
+| -------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`   | string  | yes      | file name, `[A-Za-z0-9._+-]{1,255}`, unique within the request (compared byte for byte); `.`, `..`, `manifest.json`, `meta.json` and names starting with `_` are reserved and rejected |
+| `size`   | integer | yes      | size in bytes, `1 ≤ size ≤ MAX_UPLOAD_BYTES` (default 536870912) for each file individually; above → `413 payload_too_large`. There is no limit on the total of all files.             |
+| `sha256` | string  | yes      | SHA-256 of the file, 64 lower-case hex characters                                                                                                                                      |
+| `role`   | string  | no       | the file's role, see below; ignored for generic                                                                                                                                        |
+| `labels` | object  | no       | generic only, see below; ignored for the other ecosystems                                                                                                                              |
+
+Rules per ecosystem:
+
+- **composer, npm, cargo**: exactly one file with `role: "archive"`; a single file without
+  `role` is treated (and stored) as `archive`. The archive's name ends in `.zip` (composer),
+  `.tgz` (npm) or `.crate` (cargo). No other roles are defined, so a second file, or a file
+  with another role, is `400 invalid_request`. `labels` is ignored and not stored.
+- **nuget**: exactly one file with `role: "archive"`, a `.nupkg` named
+  `<id>.<version>.nupkg` in lower case, and optionally one file with `role: "symbols"`, a
+  `.snupkg` with the same base name. `<version>` in the file name may be the version as sent
+  or its normalised form. A single file without `role` is treated as `archive`; any other file
+  is `400 invalid_request`. `labels` is ignored and not stored.
+- **generic**: any number of files; `role` is ignored and not stored. `labels` is an optional
+  object mapping strings to strings: at most 32 entries, keys `[a-z0-9][a-z0-9._-]{0,63}`,
+  values strings of at most 256 characters; anything else is `400 invalid_request`. Labels are
+  stored as sent (`{}` when absent) and are not interpreted, only filtered on (8.1).
 
 `manifest` per ecosystem:
 
@@ -409,20 +494,81 @@ example `v1` or `x`); sending it for composer or cargo is `400 invalid_request`.
     `dep:` or `pkg?/feature` syntax, split exactly like `cargo publish` does. The Worker
     always serves index lines with `v: 2`.
   - `links`, `rust_version`: optional, string or `null`.
-  - `cksum` is the request's `sha256`.
+  - `cksum` is the `sha256` of the archive file.
 
-Example request:
+- **generic**: the version's `meta`: any JSON object, possibly empty (`{}`), at most 64 KiB
+  (65536 bytes) in its compact JSON serialisation as UTF-8; larger is `400 invalid_request`.
+  The registry does not interpret it; it stores it unchanged and returns it as `meta` in the
+  generic feed (section 8).
+- **nuget**: the package metadata, parsed by the CLI from the `.nuspec` inside the `.nupkg`:
+
+  ```json
+  {
+    "id": "Acme.Sdk",
+    "version": "1.2.0",
+    "nuspec": "<?xml version=\"1.0\" encoding=\"utf-8\"?><package …>…</package>",
+    "description": "Acme SDK for .NET",
+    "authors": "Acme",
+    "projectUrl": "https://github.com/acme/sdk-dotnet",
+    "licenseExpression": "MIT",
+    "tags": ["acme", "sdk"],
+    "dependencyGroups": [
+      {
+        "targetFramework": "net8.0",
+        "dependencies": [{ "id": "Newtonsoft.Json", "range": "[13.0.1, )" }]
+      },
+      { "targetFramework": null, "dependencies": [] }
+    ]
+  }
+  ```
+
+  - `id`, `version`: required, equal to the request's `name` and `version` (as sent).
+  - `nuspec`: required, the complete `.nuspec` XML as a string. The Worker serves it verbatim
+    (9.5).
+  - `dependencyGroups`: required array; `targetFramework` is the target framework moniker or
+    `null` for a group without one; `dependencies[].id` is a package id and `range` the NuGet
+    version range as written in the `.nuspec`.
+  - `description`, `authors`, `projectUrl`, `licenseExpression`: optional strings; `tags`:
+    optional array of strings.
+  - The Worker builds the registration and search responses (9.6, 9.7) from these fields.
+
+Example request (npm):
 
 ```json
 {
   "eco": "npm",
   "name": "@acme/sdk",
   "version": "2.3.1",
-  "file": "sdk-2.3.1.tgz",
-  "size": 48213,
-  "sha256": "9f2c4e0a1b3d5f7092a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8",
+  "files": [
+    {
+      "name": "sdk-2.3.1.tgz",
+      "size": 48213,
+      "sha256": "9f2c4e0a1b3d5f7092a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8",
+      "role": "archive"
+    }
+  ],
   "manifest": { "name": "@acme/sdk", "version": "2.3.1", "main": "dist/index.js" },
   "tag": "latest"
+}
+```
+
+Example request (generic, one job of a CI matrix):
+
+```json
+{
+  "eco": "generic",
+  "name": "acme/plugin-foo",
+  "version": "1.4.0",
+  "files": [
+    {
+      "name": "plugin_foo-x86_64-pc-windows-msvc.dll",
+      "size": 1048576,
+      "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "labels": { "platform": "x86_64-pc-windows-msvc", "kind": "library" }
+    }
+  ],
+  "manifest": { "minAppVersion": "3.2" },
+  "append": true
 }
 ```
 
@@ -431,34 +577,65 @@ Response `200`:
 ```json
 {
   "uploadId": "01JBX9T6Q4ZK3M8N2P5R7S9V0W",
-  "putUrl": "https://<account>.r2.cloudflarestorage.com/<bucket>/_staging/01JBX9T6Q4ZK3M8N2P5R7S9V0W/sdk-2.3.1.tgz?X-Amz-Algorithm=AWS4-HMAC-SHA256&…",
   "expires": "2026-10-28T10:22:00Z",
-  "headers": {
-    "content-length": "48213",
-    "x-amz-checksum-sha256": "nyxOChs9X3CSpMbosNL0psjgstT2qMDitNb4oMLkttg="
-  }
+  "uploads": [
+    {
+      "name": "sdk-2.3.1.tgz",
+      "putUrl": "https://<account>.r2.cloudflarestorage.com/<bucket>/_staging/01JBX9T6Q4ZK3M8N2P5R7S9V0W/sdk-2.3.1.tgz?X-Amz-Algorithm=AWS4-HMAC-SHA256&…",
+      "headers": {
+        "content-length": "48213",
+        "x-amz-checksum-sha256": "nyxOChs9X3CSpMbosNL0psjgstT2qMDitNb4oMLkttg="
+      }
+    }
+  ]
 }
 ```
 
-| Field      | Type   | Description                                                                                  |
-| ---------- | ------ | -------------------------------------------------------------------------------------------- |
-| `uploadId` | string | opaque identifier, `[A-Za-z0-9_-]{16,64}`; pass it to `commit`                               |
-| `putUrl`   | string | presigned SigV4 `PUT` URL on the R2 S3 endpoint; the host is not the Worker's host           |
-| `expires`  | string | when `putUrl` stops working (10 minutes after `init`)                                        |
-| `headers`  | object | exactly `content-length` (decimal string) and `x-amz-checksum-sha256` (base64 of the digest) |
+| Field      | Type     | Description                                                                |
+| ---------- | -------- | -------------------------------------------------------------------------- |
+| `uploadId` | string   | opaque identifier, `[A-Za-z0-9_-]{16,64}`; pass it to `commit`             |
+| `expires`  | string   | when every `putUrl` of this upload stops working (10 minutes after `init`) |
+| `uploads`  | object[] | one entry per file of the request, in the same order                       |
 
-The upload is `PUT <putUrl>` with the archive bytes as the body and exactly the headers from
-`headers` (plus `Host`). The CLI must send a fixed-length body (no chunked transfer encoding),
-must not add `x-amz-*` or `Content-Type` headers, and must not modify `putUrl`. The signature
-covers both headers, so R2 rejects any other content. R2 answers `200` on success.
+Each entry of `uploads`:
 
-Errors: `400 invalid_request` (validation, name or version mismatch with `manifest`),
-`403 forbidden` (no `publish` grant covering the name and version), `409 version_exists`,
+| Field     | Type   | Description                                                                                  |
+| --------- | ------ | -------------------------------------------------------------------------------------------- |
+| `name`    | string | the file name from the request                                                               |
+| `putUrl`  | string | presigned SigV4 `PUT` URL on the R2 S3 endpoint; the host is not the Worker's host           |
+| `headers` | object | exactly `content-length` (decimal string) and `x-amz-checksum-sha256` (base64 of the digest) |
+
+Every file is uploaded with `PUT <putUrl>` of its entry, with the file bytes as the body and
+exactly the headers from its `headers` (plus `Host`). The CLI must send a fixed-length body (no
+chunked transfer encoding), must not add `x-amz-*` or `Content-Type` headers, and must not
+modify `putUrl`. The signature covers both headers, so R2 rejects any other content. R2 answers
+`200` on success. The files may be uploaded in any order, also in parallel.
+
+Errors: `400 invalid_request` (validation, name or version mismatch with `manifest`, `append`
+for an ecosystem other than generic), `403 forbidden` (no `publish` grant covering the name and
+version), `409 version_exists`, `409 version_closed`, `409 file_exists`,
 `413 payload_too_large`.
 
-A pending `init` does not reserve the version: two uploads of the same version may coexist;
-the first `commit` wins and the second gets `409 version_exists`. Uncommitted uploads are
-deleted by the hourly cron after 24 hours. `--dry-run` stops after this call.
+A pending `init` reserves neither the version nor the file names: two uploads of the same
+version may coexist, and `commit` checks the rules again (6.5). Uncommitted uploads are deleted
+by the hourly cron after 24 hours. `--dry-run` stops after this call.
+
+#### 6.4.1 Appending files to an existing version
+
+A CI matrix that builds one file per job publishes them as one version by sending
+`append: true` from every job:
+
+- Only generic supports it. `append: true` for any other ecosystem is `400 invalid_request`,
+  whether or not the version exists. `append: false` (or no `append`) is accepted everywhere.
+- On a version that does not exist, `append: true` behaves exactly like a normal publish.
+- On an existing version it is allowed when `published` is less than `APPEND_WINDOW_HOURS`
+  (default 24) hours ago and the version is not yanked, otherwise `409 version_closed`; and
+  when every file name is new in the version, otherwise `409 file_exists`.
+- The grant check is the same as for a new version. `manifest` is validated but ignored: the
+  version keeps the `meta` of its first publish. `published` and `publishedBy` do not change.
+- Without `append`, an existing version is `409 version_exists`, as for every ecosystem.
+
+A file, once committed, is immutable; appending only adds entries to the version's `files`.
 
 ### 6.5 `POST /api/v1/publish/commit`
 
@@ -470,9 +647,17 @@ Request:
 { "uploadId": "01JBX9T6Q4ZK3M8N2P5R7S9V0W" }
 ```
 
-The Worker checks the staged object (`head()`) against the declaration, checks immutability
-again, moves the archive to its final key, writes the version manifest, rebuilds the package
-index (and npm dist-tags), and deletes the staged archive.
+The Worker runs `head()` on every staged file and compares it with the declaration, checks
+immutability again (for an upload with `append: true`, the rules of 6.4.1), copies the files
+to their final keys, writes the version manifest (an append adds its entries to `files` with a
+conditional write, retried on conflict), rebuilds the package index (and npm dist-tags), and
+deletes the staged files.
+
+The rules are checked against the state at commit time. Without `append`, the first commit of
+a version wins and later ones get `409 version_exists`. With `append`, a commit that finds the
+version already published (for example by a parallel job of the same CI matrix) is applied as
+an append when 6.4.1 allows it, and fails with `409 version_closed` or `409 file_exists`
+otherwise.
 
 Response `201`:
 
@@ -481,24 +666,60 @@ Response `201`:
   "eco": "npm",
   "name": "@acme/sdk",
   "version": "2.3.1",
-  "url": "https://packages.example.com/npm/@acme/sdk/-/sdk-2.3.1.tgz"
+  "url": "https://packages.example.com/npm/@acme/sdk/-/sdk-2.3.1.tgz",
+  "files": [
+    {
+      "name": "sdk-2.3.1.tgz",
+      "url": "https://packages.example.com/npm/@acme/sdk/-/sdk-2.3.1.tgz"
+    }
+  ]
 }
 ```
 
-`url` is the archive's download URL in the ecosystem's native protocol:
+For generic:
 
-| Eco        | `url`                                                         |
-| ---------- | ------------------------------------------------------------- |
-| `composer` | `<PUBLIC_URL>/composer/dist/<vendor>/<package>/<version>.zip` |
-| `npm`      | `<PUBLIC_URL>/npm/<name>/-/<file>`                            |
-| `cargo`    | `<PUBLIC_URL>/cargo/dl/<crate>/<version>`                     |
+```json
+{
+  "eco": "generic",
+  "name": "acme/plugin-foo",
+  "version": "1.4.0",
+  "url": "https://packages.example.com/generic/acme%2Fplugin-foo/1.4.0",
+  "files": [
+    {
+      "name": "plugin_foo-x86_64-pc-windows-msvc.dll",
+      "url": "https://packages.example.com/generic/acme%2Fplugin-foo/1.4.0/plugin_foo-x86_64-pc-windows-msvc.dll"
+    }
+  ]
+}
+```
+
+`version` is the stored version (normalised for nuget). `url` is the archive's download URL in
+the ecosystem's native protocol, or the version's URL in the generic feed:
+
+| Eco        | `url`                                                                      |
+| ---------- | -------------------------------------------------------------------------- |
+| `composer` | `<PUBLIC_URL>/composer/dist/<vendor>/<package>/<version>.zip`              |
+| `npm`      | `<PUBLIC_URL>/npm/<name>/-/<file>`                                         |
+| `cargo`    | `<PUBLIC_URL>/cargo/dl/<crate>/<version>`                                  |
+| `generic`  | `<PUBLIC_URL>/generic/<name>/<version>`                                    |
+| `nuget`    | `<PUBLIC_URL>/nuget/flat/<id>/<version>/<id>.<version>.nupkg` (lower case) |
+
+`files` lists the files added by this upload (for an append, only the appended ones; the status
+is `201` either way), each with its download URL. For generic that is
+`<PUBLIC_URL>/generic/<name>/<version>/<file>`; generic names are encoded as described in 8.1.
+For composer, npm, cargo and nuget the archive's entry has the same `url` as the response; the
+nuget `symbols` file has no download endpoint and its `url` is `null`.
 
 Errors:
 
+- `400 upload_incomplete`: at least one staged file is missing (its `PUT` never completed).
+  Nothing is published and the upload stays as it was: the client may finish the missing
+  `PUT`s while the URLs are valid and commit again, or start again from `init`.
 - `404 not_found`: `uploadId` unknown, expired (cleaned up) or created by another credential.
-- `409 upload_mismatch`: the staged object is missing (the `PUT` never completed) or its size
-  or SHA-256 differs from the declaration. Nothing is published; start again from `init`.
-- `409 version_exists`: the version was published after this `init`.
+- `409 upload_mismatch`: the size or SHA-256 of a staged file differs from the declaration.
+  Nothing is published; start again from `init`.
+- `409 version_exists`: the version was published after this `init` (upload without `append`).
+- `409 version_closed`, `409 file_exists`: an append upload whose rules (6.4.1) no longer hold.
 
 Commit is idempotent: after a successful commit the Worker keeps a small record of the result
 under the upload's staging prefix until the cron removes it (24 hours), and a repeated
@@ -509,7 +730,8 @@ to `commit` can therefore simply retry it.
 
 Kind `read` or `admin`. Lists packages with their versions. For `read`, only versions covered
 by the credential's grants are listed and packages with no such version are omitted; for
-`admin`, everything is listed. Yanked versions are included and marked.
+`admin`, everything is listed. Yanked versions are included and marked. Ecosystems disabled in
+`ECOSYSTEMS` are omitted.
 
 Response `200`:
 
@@ -524,8 +746,28 @@ Response `200`:
           "version": "1.2.0",
           "published": "2026-10-28T10:12:00Z",
           "yanked": false,
-          "size": 183204,
-          "sha256": "3b1f…"
+          "files": [
+            { "name": "sdk-1.2.0.zip", "size": 183204, "sha256": "3b1f…", "role": "archive" }
+          ]
+        }
+      ]
+    },
+    {
+      "eco": "generic",
+      "name": "acme/plugin-foo",
+      "versions": [
+        {
+          "version": "1.4.0",
+          "published": "2026-10-28T11:02:00Z",
+          "yanked": false,
+          "files": [
+            {
+              "name": "plugin_foo-x86_64-pc-windows-msvc.dll",
+              "size": 1048576,
+              "sha256": "2c26…",
+              "labels": { "platform": "x86_64-pc-windows-msvc", "kind": "library" }
+            }
+          ]
         }
       ]
     }
@@ -534,7 +776,7 @@ Response `200`:
 ```
 
 Packages are sorted by `eco` and then `name` (byte order); versions by precedence, highest
-first.
+first. For nuget, `name` is the id with the casing of its highest version's manifest.
 
 ### 6.7 `GET /api/v1/packages/<eco>/<name>`
 
@@ -550,8 +792,7 @@ Kind `read` or `admin`. Response `200`: one `Package` object (same filtering as 
       "version": "2.3.1",
       "published": "2026-10-28T10:12:00Z",
       "yanked": false,
-      "size": 48213,
-      "sha256": "9f2c…"
+      "files": [{ "name": "sdk-2.3.1.tgz", "size": 48213, "sha256": "9f2c…", "role": "archive" }]
     }
   ]
 }
@@ -563,9 +804,11 @@ is covered by the grants.
 ### 6.8 `POST /api/v1/packages/<eco>/<name>/<version>/yank`
 
 Kind `admin`. No body. Marks the version as yanked: it disappears from the composer and npm
-indexes and is listed with `yanked: true` in the cargo index; the archive stays downloadable.
-An npm dist-tag pointing at it moves to the highest remaining stable version. Yanking an
-already yanked version succeeds.
+indexes, is listed with `yanked: true` in the cargo index, is left out of the generic feed
+unless `?include=yanked` (section 8) and gets `listed: false` in the NuGet registration while
+the flat container keeps it (section 9). Its files stay downloadable, so consumers' lockfiles
+keep working. An npm dist-tag pointing at it moves to the highest remaining stable version.
+Yanking an already yanked version succeeds. A yanked generic version is closed for appending.
 
 Response `200`: the `PackageVersion` plus `eco` and `name`:
 
@@ -576,8 +819,7 @@ Response `200`: the `PackageVersion` plus `eco` and `name`:
   "version": "2.3.1",
   "published": "2026-10-28T10:12:00Z",
   "yanked": true,
-  "size": 48213,
-  "sha256": "9f2c…"
+  "files": [{ "name": "sdk-2.3.1.tgz", "size": 48213, "sha256": "9f2c…", "role": "archive" }]
 }
 ```
 
@@ -585,8 +827,9 @@ Errors: `404 not_found` (package or version).
 
 ### 6.9 `DELETE /api/v1/packages/<eco>/<name>/<version>`
 
-Kind `admin`. No body. Deletes the manifest and the archive and rebuilds the index; the
-version can be published again. Dist-tags move as for yank.
+Kind `admin`. No body. Deletes the manifest and all files of the version and rebuilds the
+index; consumers' lockfiles that point at it stop working, and the version can be published
+again. Dist-tags move as for yank.
 
 Response `200`:
 
@@ -681,7 +924,7 @@ Request:
 | `grants`  | Grant[] | no       | default `[]`; must be empty or absent for `admin`                                 |
 | `secret`  | object  | no       | the first auth entry, same shape as the body of 6.17; default `{ "type": "key" }` |
 
-Example (`sreg token create --project shop-frontend --kind read --grant composer:acme/*:*`):
+Example:
 
 ```json
 {
@@ -779,8 +1022,8 @@ Response `201` for `key`:
 For `gh` the response has `secret` only; the CI job builds its token as
 `<project>:gh.<jwt>`. Errors: `400 invalid_request`, `404 not_found`.
 
-`sreg token rotate --project <p> --expire-old 14d` is this call followed by 6.18 with
-`expires` = now + 14 days for every previously active `key` entry.
+To rotate a secret, a client (the panel) calls this endpoint and then 6.18 with an `expires`
+in the future for every previously active `key` entry.
 
 ### 6.18 `DELETE /api/v1/credentials/<project>/secrets/<hash-prefix>`
 
@@ -815,35 +1058,366 @@ Errors: `400 invalid_request` (ambiguous prefix), `404 not_found`.
 The CLI reads the base URL from `--registry` or `REGISTRY_URL` and the token from `--token`
 or `REGISTRY_TOKEN` (or, with `--oidc`, builds `<project>:gh.<jwt>` from a GitHub Actions
 OIDC token requested with audience `PUBLIC_URL`). It sends `Authorization: Bearer <token>`,
-`X-Client-Version` and `Accept: application/json` on every API request.
+`X-Client-Version` and `Accept: application/json` on every API request, and
+`Authorization: Bearer <token>` on every request to the Worker's generic feed.
 
 ### 7.2 Publishing sequence
 
-1. Compute `size` and `sha256` of the archive and extract `manifest`.
+The publish commands build the request as follows:
+
+- `sreg composer publish`, `sreg npm publish`, `sreg cargo publish`: one file with
+  `role: "archive"` and the ecosystem-native `manifest` (6.4).
+- `sreg nuget publish [--version <v>] [--path .]`: runs `dotnet pack` (with
+  `-p:PackageVersion=<v>` when `--version` is given), unpacks the `.nupkg` (a zip), reads the
+  `.nuspec` into `manifest` (6.4) and sends the `.nupkg` as `archive`, plus the `.snupkg` as
+  `symbols` when `dotnet pack` produced one.
+- `sreg generic publish`: the given files with their `labels` and the `meta` as `manifest`. It
+  sends `append: true` by default, so that every job of a CI matrix can add its files to the
+  same version (6.4.1); `--no-append` sends `append: false` to require a fresh version.
+
+Every publish then follows these steps:
+
+1. Compute `size` and `sha256` of every file and build `manifest`.
 2. `POST /api/v1/publish/init`. Stop here with `--dry-run`.
-3. `PUT <putUrl>` with exactly `headers`:
-   - up to 3 attempts in total, waiting 1 s and then 2 s (exponential backoff, ±20% jitter)
-     between attempts;
+3. For every entry in `uploads`, `PUT <putUrl>` with exactly its `headers`:
+   - up to 3 attempts per file in total, waiting 1 s and then 2 s (exponential backoff, ±20%
+     jitter) between attempts;
    - retry on network errors, timeouts and `5xx` from R2;
    - if `expires` has passed (or is less than 30 seconds away) before an attempt, or R2
-     answers `403` because the request expired, call `init` again and continue with the new
-     `uploadId`, `putUrl` and `headers`; `init` is called at most twice per publish;
+     answers `403` because the request expired, call `init` again with the same declaration
+     and upload all files again with the new `uploadId` and `uploads` (files uploaded under the
+     previous `uploadId` are not reused); `init` is called at most twice per publish;
    - any other `4xx` from R2 (e.g. a checksum mismatch because the file changed) is fatal.
 4. `POST /api/v1/publish/commit`. On a network error or `5xx`, retry the commit (it is
-   idempotent) with the same backoff. On `409 upload_mismatch`, start again from `init` once.
+   idempotent) with the same backoff. On `409 upload_mismatch` or `400 upload_incomplete`,
+   start again from `init` once.
 5. Print the result (`--json` prints the `201` body).
 
-### 7.3 Other retries
+### 7.3 Downloading generic files
 
-`GET` requests may be retried on network errors, `5xx` and `429` (honouring `Retry-After`).
-Non-idempotent admin calls (`POST /api/v1/credentials`, `POST …/secrets`) are not retried
-automatically.
+`sreg generic get <name> [<version>|latest] [--label k=v]... [--out <dir>] [--prerelease]`:
 
-### 7.4 Exit codes
+1. `GET /generic/<name>/<version>`, or `GET /generic/<name>/latest` (the default, with
+   `?channel=prerelease` for `--prerelease`), with one `?label=k:v` per `--label` (8.4, 8.5).
+   With `--json`, print this response and stop.
+2. For every entry in `files`, `GET` its `url` with the `Authorization` header and without
+   following redirects automatically. The answer is `302`; follow it manually with a `GET` of
+   the `Location` URL that carries **no** `Authorization` header (and no other credential): the
+   presigned URL authorises itself, the token must not reach the storage host, and R2 rejects
+   a request that combines both. If the presigned `GET` answers `403` because it expired,
+   request the `302` endpoint again (once per file).
+3. Verify the size and SHA-256 of every downloaded file against the feed entry; on a mismatch,
+   delete the file and fail.
+4. Write the files into `--out` (default: the current directory) under their `name` and print
+   the paths.
 
-| Code | When                                                                                |
-| ---- | ----------------------------------------------------------------------------------- |
-| 0    | success                                                                             |
-| 1    | any error not listed below                                                          |
-| 2    | `409 version_exists` from `init` or `commit` (the pipeline can treat it as a no-op) |
-| 3    | `426 client_too_old` (the CLI prints the minimum version and a link to the release) |
+### 7.4 Other retries
+
+`GET` requests, including the generic feed, may be retried on network errors, `5xx` and `429`
+(honouring `Retry-After`). Clients do not retry non-idempotent admin calls
+(`POST /api/v1/credentials`, `POST …/secrets`) automatically.
+
+### 7.5 Exit codes
+
+| Code | When                                                                                                                                                                |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | success                                                                                                                                                             |
+| 1    | any error not listed below                                                                                                                                          |
+| 2    | already published: `409 version_exists` or `409 file_exists` from `init` or `commit` (the pipeline can treat it as a no-op; a re-run matrix job gets `file_exists`) |
+| 3    | `426 client_too_old` (the CLI prints the minimum version and a link to the release)                                                                                 |
+
+## 8. Generic feed (`/generic/…`)
+
+The read protocol of the generic ecosystem: a JSON feed for HTTP clients such as auto-updaters,
+and the protocol `sreg generic get` uses. It is not part of `/api/v1`: sections 1.2, 1.4 and 3
+do not apply. It exists only while `generic` is enabled in `ECOSYSTEMS`; otherwise every
+`/generic/…` path answers `404 not_found`.
+
+### 8.1 Conventions
+
+- **Authentication**: any form of 2.2. Kind `read` sees only the versions covered by its
+  `generic` grants, kind `admin` sees everything, kind `publish` gets `403 forbidden`. A
+  missing or invalid credential gets `401 unauthorized` with
+  `WWW-Authenticate: Bearer realm="serverless-registry"`. A `read` credential without a grant
+  for the package gets `404 not_found`, as in section 4.
+- **Methods**: only `GET`; any other method answers `404 not_found`. `/generic` is the same as
+  `/generic/`.
+- **Paths**: `<name>` is one path segment; the `/` of a grouped name is sent as `%2F`
+  (`acme%2Fplugin-foo`), and the Worker matches on the raw path as in 1.3. A literal `/` would
+  be ambiguous (`/generic/acme/latest`). `<version>` is the exact version, `<file>` the exact
+  file name, both percent-encoded.
+- **Responses**: JSON in UTF-8 (`Content-Type: application/json; charset=utf-8`), and
+  `Cache-Control: private, no-store` on every response, like every native protocol. Errors use
+  the body of section 4 (`invalid_request`, `unauthorized`, `forbidden`, `not_found`,
+  `internal_error`, `provider_unavailable`).
+- **ETag**: every `200` JSON response carries a strong `ETag`: a quoted prefix of the hex
+  SHA-256 of the body (clients treat it as opaque). A request whose `If-None-Match` contains
+  that value (or `*`) gets `304 Not Modified` with the `ETag` and no body. The body depends on
+  the credential, so the `ETag` does too. `no-store` keeps shared caches out; an application
+  that keeps its own copy of a response revalidates it with `If-None-Match`.
+- **URLs**: every `url` field is the URL of the `302` endpoint of 8.6
+  (`<PUBLIC_URL>/generic/<name>/<version>/<file>`), never a presigned URL, so a stored response
+  stays valid.
+- **Query parameters**:
+  - `label=<key>:<value>`, repeatable: split at the first `:`; the key must match the label
+    key format of 6.4, otherwise `400 invalid_request`. A file matches when it has every
+    requested label with exactly the requested value. Labels filter only the files: a version
+    without a matching file is still listed, with an empty `files` array.
+  - `include=yanked`: also return yanked versions.
+  - `channel=prerelease` (8.4 only): also consider prerelease versions.
+  - Any other value of `include` or `channel` is `400 invalid_request`; unknown parameters
+    are ignored.
+- **Versions** are compared by semver precedence. `latest` is the highest non-yanked stable
+  version covered by the credential's grants, computed on the fly from the manifests, or
+  `null` when there is none.
+- A file entry is `{ name, size, sha256, labels, url }`; `labels` is always present (`{}` when
+  the file has none).
+
+### 8.2 `GET /generic/`
+
+Packages the credential can see (at least one version covered by its grants, yanked
+included), sorted by name:
+
+```json
+{
+  "packages": [
+    { "name": "acme/plugin-foo", "latest": "1.4.0" },
+    { "name": "acme/plugin-bar", "latest": null }
+  ]
+}
+```
+
+### 8.3 `GET /generic/<name>`
+
+All versions of a package covered by the grants, highest first (clients must not rely on the
+order of object keys); yanked versions only with `?include=yanked`. `?label=` filters the files
+of every version. `latest` is not affected by `?label=` or `?include=`.
+
+```json
+{
+  "name": "acme/plugin-foo",
+  "latest": "1.4.0",
+  "versions": {
+    "1.4.0": {
+      "published": "2026-10-28T11:02:00Z",
+      "yanked": false,
+      "meta": { "minAppVersion": "3.2" },
+      "files": [
+        {
+          "name": "plugin_foo-x86_64-pc-windows-msvc.dll",
+          "size": 1048576,
+          "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "labels": { "platform": "x86_64-pc-windows-msvc", "kind": "library" },
+          "url": "https://packages.example.com/generic/acme%2Fplugin-foo/1.4.0/plugin_foo-x86_64-pc-windows-msvc.dll"
+        }
+      ]
+    }
+  }
+}
+```
+
+Errors: `404 not_found` when the package does not exist or no version of it is covered by
+the grants.
+
+### 8.4 `GET /generic/<name>/latest`
+
+The highest non-yanked stable version covered by the grants; with `?channel=prerelease`,
+prerelease versions are considered too. `?label=` filters its files as above. Response `200`
+in the single-version shape:
+
+```json
+{
+  "name": "acme/plugin-foo",
+  "version": "1.4.0",
+  "published": "2026-10-28T11:02:00Z",
+  "yanked": false,
+  "meta": { "minAppVersion": "3.2" },
+  "files": [
+    {
+      "name": "plugin_foo-x86_64-pc-windows-msvc.dll",
+      "size": 1048576,
+      "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "labels": { "platform": "x86_64-pc-windows-msvc", "kind": "library" },
+      "url": "https://packages.example.com/generic/acme%2Fplugin-foo/1.4.0/plugin_foo-x86_64-pc-windows-msvc.dll"
+    }
+  ]
+}
+```
+
+Errors: `404 not_found` when no version qualifies.
+
+### 8.5 `GET /generic/<name>/<version>`
+
+One version in the shape of 8.4; `?label=` filters its files. Errors: `404 not_found` when the
+version does not exist, is not covered by the grants, or is yanked and `?include=yanked` is
+not given.
+
+### 8.6 `GET /generic/<name>/<version>/<file>`
+
+`302 Found` with `Location` set to a presigned `GET` URL of the file, valid for 15 minutes, and
+no body. Files of yanked versions stay downloadable. Errors: `404 not_found` when the version
+is not covered by the grants or the file does not exist. Clients follow the redirect without
+the `Authorization` header (7.3).
+
+## 9. NuGet feed (`/nuget/…`)
+
+The NuGet V3 protocol, as used by `dotnet` and NuGet clients. It is not part of `/api/v1`:
+sections 1.2, 1.4 and 3 do not apply. It exists only while `nuget` is enabled in `ECOSYSTEMS`;
+otherwise every `/nuget/…` path answers `404 not_found`.
+
+### 9.1 Conventions
+
+- **Authentication**: any form of 2.2. NuGet clients send Basic credentials from
+  `packageSourceCredentials` in `nuget.config` (user name = the token's login, password = the
+  token's password); Bearer works too. Kind `read` sees only the versions covered by its
+  `nuget` grants, kind `admin` sees everything, kind `publish` gets `403 forbidden`. A missing
+  or invalid credential gets `401 unauthorized` with both
+  `WWW-Authenticate: Basic realm="serverless-registry"` and
+  `WWW-Authenticate: Bearer realm="serverless-registry"`, so that `dotnet` prompts for
+  credentials. A `read` credential without a grant for the package gets `404 not_found`.
+- **Methods**: only `GET`; any other method answers `404 not_found`.
+- **Paths**: `<id>` and `<ver>` are lower case, with `<ver>` in the normalised form (5.2); the
+  Worker matches `<id>` case-insensitively and normalises `<ver>` before matching.
+- **Responses**: JSON in UTF-8, except the `.nuspec` (XML) and the `302` redirect;
+  `Cache-Control: private, no-store` on every response. Error bodies follow section 4.
+- **Yank**: a yanked version has `listed: false` in the registration and is left out of
+  search, but the flat container still lists it and serves its `.nupkg` and `.nuspec`.
+- All URLs below are absolute and start with `PUBLIC_URL`.
+
+### 9.2 `GET /nuget/index.json`
+
+The service index:
+
+```json
+{
+  "version": "3.0.0",
+  "resources": [
+    {
+      "@id": "https://packages.example.com/nuget/flat/",
+      "@type": "PackageBaseAddress/3.0.0"
+    },
+    {
+      "@id": "https://packages.example.com/nuget/registration/",
+      "@type": "RegistrationsBaseUrl/3.6.0"
+    },
+    {
+      "@id": "https://packages.example.com/nuget/search",
+      "@type": "SearchQueryService/3.5.0"
+    }
+  ]
+}
+```
+
+### 9.3 `GET /nuget/flat/<id>/index.json`
+
+The versions of the package covered by the grants, yanked ones included, lower case and
+normalised, in ascending order:
+
+```json
+{ "versions": ["1.0.0", "1.2.0-beta.1", "1.2.0"] }
+```
+
+Errors: `404 not_found` when the package does not exist or no version is covered.
+
+### 9.4 `GET /nuget/flat/<id>/<ver>/<id>.<ver>.nupkg`
+
+`302 Found` to a presigned `GET` URL of the `.nupkg`, valid for 15 minutes. .NET drops the
+`Authorization` header when it follows a redirect to another host, so the redirect to R2 works.
+Errors: `404 not_found`.
+
+### 9.5 `GET /nuget/flat/<id>/<ver>/<id>.nuspec`
+
+The stored `nuspec` string of the version, verbatim, with
+`Content-Type: application/xml; charset=utf-8`. Errors: `404 not_found`.
+
+### 9.6 `GET /nuget/registration/<id>/index.json`
+
+The registration index with one page, inlined, holding every version covered by the grants
+(yanked ones with `listed: false`) in ascending order. No separate page or leaf documents are
+served, so their `@id` values are the URL of this document with a fragment.
+
+```json
+{
+  "count": 1,
+  "items": [
+    {
+      "@id": "https://packages.example.com/nuget/registration/acme.sdk/index.json#page/1.2.0/1.2.0",
+      "count": 1,
+      "lower": "1.2.0",
+      "upper": "1.2.0",
+      "items": [
+        {
+          "@id": "https://packages.example.com/nuget/registration/acme.sdk/index.json#1.2.0",
+          "packageContent": "https://packages.example.com/nuget/flat/acme.sdk/1.2.0/acme.sdk.1.2.0.nupkg",
+          "catalogEntry": {
+            "@id": "https://packages.example.com/nuget/registration/acme.sdk/index.json#1.2.0",
+            "id": "Acme.Sdk",
+            "version": "1.2.0",
+            "listed": true,
+            "published": "2026-10-28T10:12:00Z",
+            "packageContent": "https://packages.example.com/nuget/flat/acme.sdk/1.2.0/acme.sdk.1.2.0.nupkg",
+            "dependencyGroups": [
+              {
+                "targetFramework": "net8.0",
+                "dependencies": [{ "id": "Newtonsoft.Json", "range": "[13.0.1, )" }]
+              }
+            ],
+            "description": "Acme SDK for .NET",
+            "authors": "Acme",
+            "tags": ["acme", "sdk"]
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+`catalogEntry` carries `id` (original casing), `version`, `listed` (not yanked), `published`,
+`packageContent`, `dependencyGroups`, and `description`, `authors` and `tags` when the manifest
+has them. A dependency group whose `targetFramework` is `null` is served without
+`targetFramework`. Errors: `404 not_found`.
+
+### 9.7 `GET /nuget/search?q=&skip=&take=&prerelease=`
+
+A simple search over the packages in `_meta/packages.json`, filtered by the grants (it is what
+`dotnet package search` uses).
+
+| Parameter    | Default | Meaning                                                              |
+| ------------ | ------- | -------------------------------------------------------------------- |
+| `q`          | empty   | case-insensitive substring of the package id; empty matches every id |
+| `skip`       | `0`     | number of results to skip                                            |
+| `take`       | `20`    | number of results to return                                          |
+| `prerelease` | `false` | `true` also considers prerelease versions                            |
+
+A non-numeric `skip` or `take`, or a `prerelease` other than `true` or `false`, is
+`400 invalid_request`; unknown parameters (such as `semVerLevel`) are ignored. Only listed (not
+yanked) versions are considered, and packages without such a version are left out. Results are
+sorted by id; `totalHits` counts all matches before `skip` and `take`.
+
+```json
+{
+  "totalHits": 1,
+  "data": [
+    {
+      "id": "Acme.Sdk",
+      "version": "1.2.0",
+      "description": "Acme SDK for .NET",
+      "authors": "Acme",
+      "tags": ["acme", "sdk"],
+      "registration": "https://packages.example.com/nuget/registration/acme.sdk/index.json",
+      "totalDownloads": 0,
+      "versions": [
+        {
+          "version": "1.2.0",
+          "downloads": 0,
+          "@id": "https://packages.example.com/nuget/registration/acme.sdk/index.json#1.2.0"
+        }
+      ]
+    }
+  ]
+}
+```
+
+`version` is the highest considered version; `versions` lists every considered version.
+Download counts are not tracked and are always `0`.
