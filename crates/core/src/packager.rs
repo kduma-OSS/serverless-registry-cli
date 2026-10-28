@@ -77,9 +77,14 @@ pub struct PackageOptions {
     pub path: PathBuf,
     /// Version to publish, overriding the one detected from the project.
     pub version: Option<String>,
+    /// Prefix of the release tag on `HEAD` the version is taken from when `version` is
+    /// not given (`foo/v` for `foo/v1.2.3`); `None` means `v`. See
+    /// [`select_release_tag`](crate::git::select_release_tag).
+    pub tag_prefix: Option<String>,
     /// Distribution tag (npm only).
     pub tag: Option<String>,
-    /// Extra arguments passed through to the native packaging tool.
+    /// Extra arguments passed verbatim to the native packaging tool (the arguments after
+    /// `--` on the command line).
     pub extra_args: Vec<String>,
 }
 
