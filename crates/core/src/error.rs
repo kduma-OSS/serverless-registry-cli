@@ -45,7 +45,7 @@ pub enum Error {
     /// The presigned upload URL was rejected with `403`, usually because it expired.
     ///
     /// The caller can request a new URL with `publish/init` and try again.
-    #[error("the storage rejected the upload URL (403); it has probably expired")]
+    #[error("the upload URL expired or was rejected by the storage (403)")]
     UploadExpired,
 
     /// The storage rejected the archive upload.

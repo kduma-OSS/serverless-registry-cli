@@ -10,6 +10,7 @@ pub mod digest;
 pub mod error;
 pub mod models;
 pub mod packager;
+pub mod publish;
 pub mod retry;
 pub mod upload;
 
