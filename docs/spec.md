@@ -157,6 +157,7 @@ R2 holds archives and manifests as the source of truth, and indexes as a cache; 
 | `<eco>/index/…`                            | indexes generated from manifests, in the layout required by the ecosystem       |
 | `_staging/<upload-id>/<file>`              | file uploaded via presign, not yet committed                                    |
 | `_meta/packages.json`                      | list of all packages per ecosystem (for the home page and the panel)            |
+| `_meta/installation.json`                  | the installation id (`{ "id": … }`), the same as `installation_id` in KV        |
 | `_meta/deps/<eco>.json`                    | dependency graph of the ecosystem for transitive grants (below)                 |
 
 The package name in the key is encoded safely: `/` and `@` in composer/npm names are replaced (`acme/sdk` → `acme__sdk`, `@acme/sdk` → `@acme__sdk`), so that listing by prefix is unambiguous. Generic names are encoded the same way (`acme/plugin-foo` → `acme__plugin-foo`). Composer names cannot collide under this encoding, because Composer forbids consecutive separators; npm names could collide only through a scope that itself contains `__`, because decoding reverses only the first `__` (`@a__b/c` and `@a/b__c` both become `@a__b__c`).
@@ -190,6 +191,7 @@ The package name in the key is encoded safely: `/` and `@` in composer/npm names
 | ----------------------- | ------------------------------------------------------------------------------ | ------------- |
 | `cred:<project>`        | credential record                                                              | none          |
 | `schema_version`        | integer                                                                        | none          |
+| `installation_id`       | the id that must match `_meta/installation.json` in the bucket                 | none          |
 | `gh-repo:<owner/repo>`  | list of the projects with a `gh` entry for this repository (for the `_` login) | none          |
 | `login-session:<nonce>` | the approval or refusal of a browser login, until the CLI collects it          | a few minutes |
 
@@ -603,6 +605,7 @@ src/
     admin.ts            # yank, delete, reindex, credentials
     cron.ts             # cleanup of staging and expired secrets
     migrate.ts          # schema_version and migrations
+    bucket.ts           # installation id: guards against a repointed R2 bucket
   adapters/
     types.ts            # interface Adapter, Manifest, IndexFile
     composer/  npm/  cargo/  generic/  nuget/  swift/  maven/

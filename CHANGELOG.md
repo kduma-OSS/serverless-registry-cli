@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The copies of `docs/api.md` and `docs/spec.md` describe the registry's `503 bucket_mismatch`
+  (an R2 bucket that is not the installation's own) and `POST /api/v1/bucket/accept`. The CLI
+  shows the registry's message for the error, like for any other.
+
 ### Added
 
 - **Sign in through the browser.** `--login` on `sreg auth <eco>`, `sreg generic get` and every
