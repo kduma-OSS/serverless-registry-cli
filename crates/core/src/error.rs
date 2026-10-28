@@ -33,6 +33,10 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    /// A GitHub Actions OIDC token could not be obtained.
+    #[error("GitHub Actions OIDC: {0}")]
+    Oidc(String),
+
     /// The registry requires a newer client version.
     #[error(
         "this version of sreg is too old for the registry; version {min} or newer is required"

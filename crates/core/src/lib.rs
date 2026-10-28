@@ -9,10 +9,14 @@ pub mod client;
 pub mod digest;
 pub mod error;
 pub mod models;
+pub mod oidc;
 pub mod packager;
 pub mod publish;
 pub mod retry;
 pub mod upload;
+
+#[cfg(test)]
+mod test_env;
 
 pub use client::Client;
 pub use error::{Error, Result};
