@@ -463,6 +463,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.sh | sh
       - run: sreg cargo publish --skip-existing -- --locked
         env:
           REGISTRY_URL: https://packages.example.com
@@ -475,6 +476,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.sh | sh
       - run: sreg nuget publish --project src/Acme.Sdk/Acme.Sdk.csproj -- -c Release
         env:
           REGISTRY_URL: https://packages.example.com
@@ -495,6 +497,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.sh | sh
       - run: |
           crate="${GITHUB_REF_NAME%/v*}"
           sreg cargo publish --package "$crate" --tag-prefix "$crate/v" --skip-existing
