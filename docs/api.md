@@ -4,9 +4,11 @@ This document is the contract between the Worker and the `sreg` CLI (and the adm
 is the source of truth for the `/api/v1` surface: a client can be implemented from this
 document alone. The native read protocols (`/composer`, `/npm`, `/cargo`) and the panel's
 `/login` and `/logout` are described in [spec.md](spec.md) and are out of scope here. The
-generic feed (`/generic/…`, section 8) and the NuGet feed (`/nuget/…`, section 9) are not part
-of `/api/v1`, but the CLI and the NuGet clients depend on their exact shape, so they are
-specified here.
+generic feed (`/generic/…`, section 8), the NuGet feed (`/nuget/…`, section 9), the Swift
+registry (`/swift/…`, section 10) and the Maven repository (`/maven/…`, section 11) are not
+part of `/api/v1`, but the CLI and the package manager clients depend on their exact shape, so
+they are specified here. Section 12 records details of the npm and cargo read protocols that
+the spec leaves open.
 
 Changes to this document must be backwards compatible (new optional request fields, new
 response fields, new endpoints, new error codes) or must introduce `/api/v2`. When a new path
@@ -51,13 +53,13 @@ Worker.
 
 ### 1.3 Path parameters
 
-| Parameter       | Format                                                                                                                                                                                                                                                                             |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<eco>`         | `composer`, `npm`, `cargo`, `generic` or `nuget`, and only when it is enabled in `ECOSYSTEMS` (1.5). Any other value answers `404 not_found`.                                                                                                                                      |
-| `<name>`        | Package name, percent-encoded as one path segment: `/` must be sent as `%2F`, `@` may be sent literally or as `%40`. Examples: `acme%2Fsdk` (composer), `%40acme%2Fsdk` (npm), `acme-core` (cargo), `acme%2Fplugin-foo` (generic), `Acme.Sdk` (nuget; matched case-insensitively). |
-| `<version>`     | Exact version string as published, percent-encoded (versions never contain `/`); for nuget it is normalised first (5.2).                                                                                                                                                           |
-| `<project>`     | A local project slug, `[a-z0-9][a-z0-9-]{1,62}`. A value containing `.` (a provider-backed project) answers `400 invalid_request`.                                                                                                                                                 |
-| `<hash-prefix>` | 8 to 12 lower-case hexadecimal characters identifying an auth entry (see 6.1).                                                                                                                                                                                                     |
+| Parameter       | Format                                                                                                                                                                                                                                                                                                                                                            |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<eco>`         | `composer`, `npm`, `cargo`, `generic`, `nuget`, `swift` or `maven`, and only when it is enabled in `ECOSYSTEMS` (1.5). Any other value answers `404 not_found`.                                                                                                                                                                                                   |
+| `<name>`        | Package name, percent-encoded as one path segment: `/` must be sent as `%2F`, `@` may be sent literally or as `%40`. Examples: `acme%2Fsdk` (composer), `%40acme%2Fsdk` (npm), `acme-core` (cargo), `acme%2Fplugin-foo` (generic), `Acme.Sdk` (nuget; matched case-insensitively), `acme.Networking` (swift; matched case-insensitively), `com.acme:sdk` (maven). |
+| `<version>`     | Exact version string as published, percent-encoded (versions never contain `/`); for nuget it is normalised first (5.2).                                                                                                                                                                                                                                          |
+| `<project>`     | A local project slug, `[a-z0-9][a-z0-9-]{1,62}`. A value containing `.` (a provider-backed project) answers `400 invalid_request`.                                                                                                                                                                                                                                |
+| `<hash-prefix>` | 8 to 12 lower-case hexadecimal characters identifying an auth entry (see 6.1).                                                                                                                                                                                                                                                                                    |
 
 The Worker matches paths on the raw (still percent-encoded) path and decodes each segment
 separately, so `%2F` inside `<name>` never splits the segment.
@@ -81,13 +83,13 @@ The Worker processes an `/api/v1` request in this order and answers with the fir
 These Worker variables (see the spec, "Deployment, configuration and updates") change what
 the contract allows:
 
-| Variable              | Default                            | Effect                                                                                                                                                                                                                                                 |
-| --------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `PUBLIC_URL`          | the request's origin               | base of every URL in responses (`url` fields, `aud` of `gh` tokens)                                                                                                                                                                                    |
-| `ECOSYSTEMS`          | `composer,npm,cargo,generic,nuget` | enabled ecosystems; a disabled one is treated as unknown: `<eco>` paths answer `404 not_found`, `eco` in `init` is `400 invalid_request`, listings omit it and every path of its read protocol (e.g. `/generic/…`, `/nuget/…`) answers `404 not_found` |
-| `MAX_UPLOAD_BYTES`    | `536870912` (512 MiB)              | largest `size` of each file in `init`                                                                                                                                                                                                                  |
-| `APPEND_WINDOW_HOURS` | `24`                               | how long after `published` files may still be appended to a version (6.4.1)                                                                                                                                                                            |
-| `TOKEN_PREFIX`        | empty                              | optional token prefix (2.1)                                                                                                                                                                                                                            |
+| Variable              | Default                                              | Effect                                                                                                                                                                                                                                                                         |
+| --------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PUBLIC_URL`          | the request's origin                                 | base of every URL in responses (`url` fields, `aud` of `gh` tokens)                                                                                                                                                                                                            |
+| `ECOSYSTEMS`          | `composer,npm,cargo,generic,nuget,swift,maven` (all) | enabled ecosystems; a disabled one is treated as unknown: `<eco>` paths answer `404 not_found`, `eco` in `init` is `400 invalid_request`, listings omit it and every path of its read protocol (e.g. `/generic/…`, `/nuget/…`, `/swift/…`, `/maven/…`) answers `404 not_found` |
+| `MAX_UPLOAD_BYTES`    | `536870912` (512 MiB)                                | largest `size` of each file in `init`                                                                                                                                                                                                                                          |
+| `APPEND_WINDOW_HOURS` | `24`                                                 | how long after `published` files may still be appended to a version (6.4.1)                                                                                                                                                                                                    |
+| `TOKEN_PREFIX`        | empty                                                | optional token prefix (2.1)                                                                                                                                                                                                                                                    |
 
 ## 2. Authentication
 
@@ -102,7 +104,7 @@ the contract allows:
   credentials are implemented; a token naming a source answers `401 unauthorized` until
   providers are implemented. When they are, an unreachable provider answers
   `503 provider_unavailable` for tokens of that source.
-- `project`: slug `[a-z0-9][a-z0-9-]{1,62}`.
+- `project`: slug `[a-z0-9][a-z0-9-]{1,62}`, or the reserved login `_` (2.5).
 - `type` (optional): `key` (default; never written out) or `gh` (a GitHub Actions OIDC JWT).
 - `secret`: for `key`, 32 base62 characters generated by the Worker; for `gh`, the whole JWT
   (it contains dots, which is fine: the secret is everything after `<type>.`).
@@ -112,7 +114,8 @@ Parsing:
 1. If `TOKEN_PREFIX` is a non-empty string and the token starts with it, strip it.
 2. Split at the **first** `:` into login and password. No `:` → `401`.
 3. Login: one `.`-separated segment → `project`; two segments → `source.project`; anything
-   else → `401`.
+   else → `401`. The login `_` (it fails the slug pattern, so it can never name a project) is
+   allowed only alone and only with type `gh`; anything else with `_` → `401`.
 4. Password: no `.` → type `key`, the whole password is the secret; otherwise the part before
    the first `.` is the type and the rest is the secret. An unknown type → `401`.
 
@@ -127,6 +130,7 @@ Examples:
 ```text
 shop-frontend:k7Qx2mN9pLw4vR8sT1bYc3dF6hJ0aZ5e     project shop-frontend, type key
 ci-acme-sdk:gh.eyJhbGciOi….eyJpc3Mi….SflKxw…       project ci-acme-sdk, type gh
+_:gh.eyJhbGciOi….eyJpc3Mi….SflKxw…                 project resolved from the JWT (2.5)
 srg_shop-frontend:k7Qx2mN9pLw4vR8sT1bYc3dF6hJ0aZ5e with TOKEN_PREFIX = "srg_"
 ```
 
@@ -161,10 +165,53 @@ Every credential has exactly one kind:
 | `publish` | `whoami`, `publish/init`, `publish/commit` (within its grants)                               |
 | `admin`   | `whoami`, package listing and generic feed (unfiltered), package administration, credentials |
 
+Any kind may hold `key` and `gh` entries; a `publish` credential usually has `gh` entries and
+may also have `key` entries (for publishing from outside GitHub Actions).
+
 `GET /api/v1/version` requires no credential. A missing, malformed, unknown, expired or
 otherwise invalid credential answers `401 unauthorized` with
 `WWW-Authenticate: Bearer realm="serverless-registry"`. A valid credential of the wrong kind,
 or without a grant for the requested package and version, answers `403 forbidden`.
+
+### 2.5 `gh` entries and the `_` login
+
+A `gh` auth entry matches the claims of a GitHub Actions OIDC JWT. The kernel always checks
+`iss` (`https://token.actions.githubusercontent.com`), `aud` (= `PUBLIC_URL`), `exp` and `nbf`
+itself; an entry then matches when every field it sets matches (an absent or `null` optional
+field means "any"):
+
+| Field                 | Claim                 | Match                                                                                                                        |
+| --------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `repository`          | `repository`          | required; `owner/repo` (equal, case-insensitively) or `owner/*` (any repository of that owner)                               |
+| `repository_id`       | `repository_id`       | equal (a string of digits)                                                                                                   |
+| `repository_owner_id` | `repository_owner_id` | equal (a string of digits)                                                                                                   |
+| `ref`                 | `ref`                 | glob over the full ref, `*` matches any characters (including `/`): `refs/heads/main`, `refs/tags/v*`                        |
+| `workflow`            | `workflow_ref`        | equal to the claim after stripping the leading `owner/repo/` and the trailing `@<ref>`, e.g. `.github/workflows/release.yml` |
+| `environment`         | `environment`         | equal                                                                                                                        |
+| `expires`             | –                     | the entry is active while `expires` is `null` or in the future                                                               |
+
+With `<project>:gh.<jwt>` the credential `<project>` must have a matching active `gh` entry.
+With the reserved login, `_:gh.<jwt>`, the Worker resolves the project from the JWT:
+
+1. Verify the JWT as above (failure → `401 unauthorized`).
+2. Read the `repository` claim and look up the KV keys `gh-repo:<owner/repo>` and
+   `gh-repo:<owner>/*`, both lower-cased (GitHub names are case-insensitive). Each value is a
+   JSON array of project names; the union is the list of candidates.
+3. Load every candidate's record and keep the ones with a matching active `gh` entry.
+4. Keep only the credentials of the kind the request needs: `publish` for
+   `/api/v1/publish/*`, `read` for every other authenticated route (including the generic and
+   NuGet feeds and a panel login). An `admin` credential is never resolved through `_`.
+5. Exactly one left → that is the identity. None → `401 unauthorized`. More than one →
+   `401 unauthorized` with the message
+   "more than one project matches this token; use <project>:gh.<jwt>".
+
+The resolved name is what `whoami` returns as `project` and what manifests record as
+`publishedBy`; `_` never appears there. A panel login with `_` resolves the same way, with
+kind `read`. Only KV credentials take part (a provider source cannot be combined with `_`).
+
+The `gh-repo:<owner/repo>` index (and `gh-repo:<owner>/*` for owner globs) is maintained by
+every credential write in the API and the panel (create, replace grants, add or expire a
+secret, delete) and is rebuilt by data migration 2.
 
 ## 3. Client version negotiation
 
@@ -221,7 +268,7 @@ Written as TypeScript for precision; `?` marks an optional field, `| null` a fie
 always present but may be `null`.
 
 ```ts
-type Eco = "composer" | "npm" | "cargo" | "generic" | "nuget";
+type Eco = "composer" | "npm" | "cargo" | "generic" | "nuget" | "swift" | "maven";
 type Kind = "read" | "publish" | "admin";
 
 interface Grant {
@@ -241,9 +288,12 @@ interface KeyAuthEntry {
 interface GhAuthEntry {
   id: string; // 12 lower-case hex chars, opaque and stable
   type: "gh";
-  repository: string; // "owner/repo", compared with the JWT "repository" claim
-  ref: string | null; // e.g. "refs/heads/main"; null = any ref
-  workflow: string | null; // compared with the JWT "workflow" claim; null = any workflow
+  repository: string; // "owner/repo" or "owner/*" (2.5)
+  repository_id: string | null; // digits; null = any
+  repository_owner_id: string | null; // digits; null = any
+  ref: string | null; // glob over the full ref, e.g. "refs/tags/v*"; null = any ref
+  workflow: string | null; // workflow file path, e.g. ".github/workflows/release.yml"; null = any
+  environment: string | null; // GitHub Actions environment; null = any
   created: string;
   expires: string | null;
 }
@@ -261,7 +311,8 @@ interface PackageFile {
   name: string; // unique within the version
   size: number;
   sha256: string;
-  role?: string; // composer, npm, cargo, nuget: "archive" or (nuget) "symbols"; absent for generic
+  digests?: Record<string, string>; // extra digests computed at commit (see 6.5), hex
+  role?: string; // per ecosystem (6.4), e.g. "archive", "symbols", "manifest", "pom"; absent for generic
   labels?: Record<string, string>; // generic: always present ({} when none); absent elsewhere
 }
 
@@ -308,15 +359,17 @@ the generic feed (section 8) are derived from it. Clients must treat an absent `
 
 ### 5.1 Grants
 
-- `eco`: one of the five ecosystems. A grant may name an ecosystem that is disabled in
+- `eco`: one of the seven ecosystems. A grant may name an ecosystem that is disabled in
   `ECOSYSTEMS`; it takes effect once the ecosystem is enabled.
 - `package`: an exact package name, or a pattern whose only `*` is its last character and
   starts a segment or ends one (`acme/*`, `@acme/*`, `acme-*`). `*` matches any sequence of
   characters that does not contain `/`. The pattern `*` alone matches every package of the
-  ecosystem. For nuget, package ids and patterns are compared case-insensitively.
+  ecosystem. For nuget and swift, package names and patterns are compared case-insensitively;
+  for maven, `*` may also follow the `:` (`com.acme:*`).
 - `versions`: a constraint in the ecosystem's syntax (Composer, npm/node-semver, cargo
-  `VersionReq`; generic uses the npm/node-semver syntax; nuget uses NuGet version ranges:
-  `[1.0,2.0)`, `1.0` (= `>=1.0`), `[1.0]`, `(,1.0]`, floating `1.*`), or `*` for all versions.
+  `VersionReq`; generic and swift use the npm/node-semver syntax; nuget uses NuGet version
+  ranges: `[1.0,2.0)`, `1.0` (= `>=1.0`), `[1.0]`, `(,1.0]`, floating `1.*`; maven uses Maven
+  version ranges: `[1.0,2.0)`, `(,1.0]`, `[1.0]`, `1.0` (= `>=1.0`)), or `*` for all versions.
   The ecosystem's adapter evaluates it. A constraint that does not parse is
   `400 invalid_request`.
 - `transitive` (optional boolean, default `true`): for `read`, the grant also opens the
@@ -327,18 +380,19 @@ the generic feed (section 8) are derived from it. Clients must treat an absent `
 - A credential without a grant for an ecosystem has no access to it. For `read` a grant means
   "may install", for `publish` "may publish".
 
-Shorthand: `eco:package[:versions[:transitive]]`, split at the first two `:`; `versions`
-defaults to `*`. When the rest after the second `:` ends with `:true` or `:false`, that suffix
-is `transitive`, otherwise `transitive` defaults to `true`. Examples: `composer:acme/*:*`,
+Shorthand: `eco:package[:versions[:transitive]]`, split at the first two `:` (for maven,
+whose package names contain one `:`, at the first three); `versions` defaults to `*`. When the
+rest ends with `:true` or `:false`, that suffix is `transitive`, otherwise `transitive`
+defaults to `true`. Examples: `composer:acme/*:*`,
 `npm:@acme/sdk:^2.0:false`, `cargo:acme-core:>=1.4, <2`, `generic:acme/*:^1.0`,
-`nuget:Acme.*:[1.0,2.0)`.
+`nuget:Acme.*:[1.0,2.0)`, `maven:com.acme:sdk:[1.0,2.0)`.
 
 ### 5.2 Versions
 
 The version format is validated by the ecosystem's adapter (`validateVersion`), not by the
 kernel:
 
-- **composer, npm, cargo, generic**: semver 2.0.0 versions `MAJOR.MINOR.PATCH[-PRERELEASE]`
+- **composer, npm, cargo, generic, swift**: semver 2.0.0 versions `MAJOR.MINOR.PATCH[-PRERELEASE]`
   without a leading `v` and without build metadata (`+…` is rejected because Composer cannot
   represent it and cargo ignores it for identity). For composer the prerelease, when present,
   must be `alpha`, `beta` or `rc`, optionally followed by a number with or without a dot
@@ -351,6 +405,13 @@ kernel:
   example `01.2.3.0-Beta+abc` becomes `1.2.3-beta`. Package ids are case-insensitive: they are
   lower-cased in R2 keys and in feed paths, but served with the original casing from the
   manifest.
+- **swift**: semver as above. Package identities `scope.name` are case-insensitive: stored as
+  given, lower-cased in R2 keys.
+- **maven**: any `[A-Za-z0-9._+-]{1,128}` that does not end in `-SNAPSHOT` (snapshots are
+  mutable and not supported), ordered by Maven's `ComparableVersion` rules. A version is a
+  prerelease when it carries a qualifier that `ComparableVersion` orders before the release
+  (`alpha`/`a`, `beta`/`b`, `milestone`/`m`, `rc`/`cr`). Coordinates are case-sensitive and R2
+  keys use `<groupId>:<artifactId>` verbatim.
 
 Versions are compared as exact strings for immutability (for nuget, the normalised strings, so
 `1.2` and `1.2.0` are the same version).
@@ -369,24 +430,27 @@ packages depend on, as long as they are in this registry:
   `"B": "^2.0"`, B 2.x is opened too.
 - Yanked versions take part like any other version, so lockfiles that pin a yanked version
   and its dependencies keep working (6.8).
-- Optional, dev and peer dependencies count like normal ones. A constraint the adapter cannot
+- Optional, dev and peer dependencies count like normal ones, except where the table below
+  says otherwise. A constraint the adapter cannot
   evaluate (for example an npm `file:`, `git+…` or `workspace:` specifier, or an alias) opens
   nothing. Generic packages have no dependencies.
 - The dependencies come from the adapter's `dependencies(m: Manifest)`, which returns
   `{ name, constraint }` pairs:
 
-  | Eco        | Dependencies taken from the manifest                                                                                                      |
-  | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-  | `composer` | `require` and `require-dev` entries whose key looks like `vendor/package`; `php`, `ext-*`, `lib-*` and `composer-plugin-api` are excluded |
-  | `npm`      | `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies`                                                          |
-  | `cargo`    | `deps[]` entries whose `registry` is `null` (this registry); the name is `package ?? name`, the constraint is `req`                       |
-  | `nuget`    | every `dependencyGroups[].dependencies[]` entry, with its `range` (ids compared case-insensitively)                                       |
-  | `generic`  | none                                                                                                                                      |
+  | Eco        | Dependencies taken from the manifest                                                                                                                                                                                                          |
+  | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `composer` | `require` and `require-dev` entries whose key looks like `vendor/package`; `php`, `ext-*`, `lib-*` and `composer-plugin-api` are excluded                                                                                                     |
+  | `npm`      | `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies`                                                                                                                                                              |
+  | `cargo`    | `deps[]` entries whose `registry` is `null` (this registry); the name is `package ?? name`, the constraint is `req`                                                                                                                           |
+  | `nuget`    | every `dependencyGroups[].dependencies[]` entry, with its `range` (ids compared case-insensitively)                                                                                                                                           |
+  | `swift`    | `dumpPackage.dependencies` entries of kind `registry` (identity `scope.name`); a `range` requirement becomes `>=<lowerBound> <<upperBound>`, an `exact` one the exact version; `sourceControl` and `fileSystem` dependencies do not take part |
+  | `maven`    | `dependencies` with `scope` `compile` or `runtime` and `optional: false`; the name is `groupId:artifactId`, the constraint is `version` (a plain version is exact, a range is used as written)                                                |
+  | `generic`  | none                                                                                                                                                                                                                                          |
 
 - Transitive access is not a grant on the dependency: it does not widen the explicit grants,
   and a consumer that wants the dependency directly, with its own wider constraint, needs an
   explicit grant. Publishing always requires an explicit `publish` grant.
-- The native read protocols (composer, npm, cargo, NuGet) serve transitively allowed versions
+- The native read protocols (composer, npm, cargo, NuGet, Swift, Maven) serve transitively allowed versions
   exactly like explicitly granted ones. The `/api/v1` package listings show them separately
   (6.6).
 - The closure is cached in KV under `closure:<project>:<eco>` for 60 seconds. Every publish,
@@ -415,6 +479,7 @@ packages depend on, as long as they are in this registry:
 | DELETE | `/api/v1/credentials/<project>`                       | `admin`         | 6.16    |
 | POST   | `/api/v1/credentials/<project>/secrets`               | `admin`         | 6.17    |
 | DELETE | `/api/v1/credentials/<project>/secrets/<hash-prefix>` | `admin`         | 6.18    |
+| GET    | `/api/v1/github/repository?name=<owner/repo>`         | `admin`         | 6.19    |
 
 ### 6.1 Auth entry identifiers
 
@@ -431,7 +496,7 @@ No authentication, no version check.
 Response `200`:
 
 ```json
-{ "version": "0.4.0", "minClientVersion": "0.1.0", "schemaVersion": 1 }
+{ "version": "0.4.0", "minClientVersion": "0.1.0", "schemaVersion": 2 }
 ```
 
 | Field              | Type    | Description                                                                          |
@@ -453,7 +518,7 @@ Any kind. Response `200`:
 ```
 
 `project` is `[<source>.]<project>` (e.g. `okta.shop-frontend` for a provider-backed
-credential). `grants` are returned as stored, with `transitive`; they are `[]` for `admin`.
+credential); for an `_:gh.<jwt>` token it is the resolved project name, never `_` (2.5). `grants` are returned as stored, with `transitive`; they are `[]` for `admin`.
 
 ### 6.4 `POST /api/v1/publish/init`
 
@@ -462,40 +527,56 @@ rules, 6.4.1), stores the declaration in staging and returns one presigned uploa
 
 Request:
 
-| Field      | Type     | Required | Description                                                                                                                                                                                                                                                                                                                                                                  |
-| ---------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `eco`      | string   | yes      | `composer`, `npm`, `cargo`, `generic` or `nuget`; must be enabled in `ECOSYSTEMS`                                                                                                                                                                                                                                                                                            |
-| `name`     | string   | yes      | package name: composer `vendor/package` (lower case), npm `@scope/name` (scoped names only), cargo crate name, generic `[a-z0-9][a-z0-9._-]*` with an optional single group segment (`acme/plugin-foo`) and without `__` anywhere (R2 keys encode `/` as `__`, so `acme__x` would collide with `acme/x`), nuget the package id as in the `.nuspec` (`[A-Za-z0-9_.-]{1,100}`) |
-| `version`  | string   | yes      | version, see 5.2                                                                                                                                                                                                                                                                                                                                                             |
-| `files`    | object[] | yes      | the files of this upload, see below; 1 to 64 entries, names unique                                                                                                                                                                                                                                                                                                           |
-| `manifest` | object   | yes      | ecosystem-native metadata, or the free-form `meta` for generic; see below                                                                                                                                                                                                                                                                                                    |
-| `tag`      | string   | no       | npm only: dist-tag to point at this version. Default `latest`; for a prerelease version without `tag` the default is `next`.                                                                                                                                                                                                                                                 |
-| `append`   | boolean  | no       | default `false`; `true` adds files to an existing version, generic only (6.4.1)                                                                                                                                                                                                                                                                                              |
+| Field      | Type     | Required | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eco`      | string   | yes      | `composer`, `npm`, `cargo`, `generic`, `nuget`, `swift` or `maven`; must be enabled in `ECOSYSTEMS`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `name`     | string   | yes      | package name: composer `vendor/package` (lower case), npm `@scope/name` (scoped names only), cargo crate name (`^[a-z][a-z0-9_-]{0,63}$`), generic `[a-z0-9][a-z0-9._-]*` with an optional single group segment (`acme/plugin-foo`) and without `__` anywhere (R2 keys encode `/` as `__`, so `acme__x` would collide with `acme/x`), nuget the package id as in the `.nuspec` (`[A-Za-z0-9_.-]{1,100}`), swift `<scope>.<name>` (`scope` `[a-zA-Z0-9-]{1,39}`, `name` `[a-zA-Z0-9_-]{1,100}`), maven `<groupId>:<artifactId>` (`groupId` dot-separated segments of `[A-Za-z0-9_-]`, `artifactId` `[A-Za-z0-9_.-]+`) |
+| `version`  | string   | yes      | version, see 5.2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `files`    | object[] | yes      | the files of this upload, see below; 1 to 64 entries, names unique                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `manifest` | object   | yes      | ecosystem-native metadata, or the free-form `meta` for generic; see below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `tag`      | string   | no       | npm only: dist-tag to point at this version. Default `latest`; for a prerelease version without `tag` the default is `next`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `append`   | boolean  | no       | default `false`; `true` adds files to an existing version, generic only (6.4.1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 `tag` must match `^[a-z][a-z0-9._-]{0,63}$` and must not itself be a valid semver range (for
 example `v1` or `x`); sending it for any ecosystem other than npm is `400 invalid_request`.
 
 Each entry of `files`:
 
-| Field    | Type    | Required | Description                                                                                                                                                                            |
-| -------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`   | string  | yes      | file name, `[A-Za-z0-9._+-]{1,255}`, unique within the request (compared byte for byte); `.`, `..`, `manifest.json`, `meta.json` and names starting with `_` are reserved and rejected |
-| `size`   | integer | yes      | size in bytes, `1 ≤ size ≤ MAX_UPLOAD_BYTES` (default 536870912) for each file individually; above → `413 payload_too_large`. There is no limit on the total of all files.             |
-| `sha256` | string  | yes      | SHA-256 of the file, 64 lower-case hex characters                                                                                                                                      |
-| `role`   | string  | no       | the file's role, see below; ignored for generic                                                                                                                                        |
-| `labels` | object  | no       | generic only, see below; ignored for the other ecosystems                                                                                                                              |
+| Field     | Type    | Required | Description                                                                                                                                                                                                                                                      |
+| --------- | ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`    | string  | yes      | file name, `[A-Za-z0-9._+-]{1,255}`, unique within the request (compared byte for byte); `.`, `..`, `manifest.json`, `meta.json` and names starting with `_` are reserved and rejected; swift manifest variants may also contain `@` (`Package@swift-5.9.swift`) |
+| `size`    | integer | yes      | size in bytes, `1 ≤ size ≤ MAX_UPLOAD_BYTES` (default 536870912) for each file individually; above → `413 payload_too_large`. There is no limit on the total of all files.                                                                                       |
+| `sha256`  | string  | yes      | SHA-256 of the file, 64 lower-case hex characters                                                                                                                                                                                                                |
+| `role`    | string  | no       | the file's role, see below; ignored for generic                                                                                                                                                                                                                  |
+| `labels`  | object  | no       | generic only, see below; ignored for the other ecosystems                                                                                                                                                                                                        |
+| `digests` | –       | –        | not sent: extra digests are computed by the Worker (6.5); the field is ignored                                                                                                                                                                                   |
 
 Rules per ecosystem:
 
 - **composer, npm, cargo**: exactly one file with `role: "archive"`; a single file without
-  `role` is treated (and stored) as `archive`. The archive's name ends in `.zip` (composer),
-  `.tgz` (npm) or `.crate` (cargo). No other roles are defined, so a second file, or a file
+  `role` is treated (and stored) as `archive`. The archive's name ends in `.zip` (composer)
+  or `.tgz` (npm); for cargo it is exactly `<name>-<version>.crate`. No other roles are defined, so a second file, or a file
   with another role, is `400 invalid_request`. `labels` is ignored and not stored.
 - **nuget**: exactly one file with `role: "archive"`, a `.nupkg` named
   `<id>.<version>.nupkg` in lower case, and optionally one file with `role: "symbols"`, a
   `.snupkg` with the same base name. `<version>` in the file name may be the version as sent
   or its normalised form. A single file without `role` is treated as `archive`; any other file
   is `400 invalid_request`. `labels` is ignored and not stored.
+- **swift**: exactly one file with `role: "archive"`, the source archive produced by
+  `swift package archive-source`, named `<name>-<version>.zip`; one file with
+  `role: "manifest"` named `Package.swift`; and any number of further `manifest` files named
+  `Package@swift-<X[.Y[.Z]]>.swift`. Any other file is `400 invalid_request`. `labels` is
+  ignored and not stored.
+- **maven**: files named `<artifactId>-<version>[-<classifier>].<ext>`. The Worker derives
+  each file's role from its name (a `role` sent by the client must agree, otherwise
+  `400 invalid_request`): `pom` for `<artifactId>-<version>.pom` (required, exactly one);
+  `archive` for the main artifact without a classifier whose extension follows the POM's
+  `<packaging>` (`jar`, `aar`, `war`, …; optional, absent for `pom` packaging such as BOMs);
+  `sources` for `-sources.jar`; `javadoc` for `-javadoc.jar`; `module` for `.module` (Gradle
+  Module Metadata); `extra` for anything else (e.g. other classifiers or `.asc` signatures).
+  Names ending in `.md5`, `.sha1`, `.sha256` or `.sha512` are rejected, because the Worker
+  serves those checksums itself (11.4). The maven adapter declares
+  `digests: ["sha1", "md5", "sha512"]` (6.5). `labels` is ignored and not stored.
 - **generic**: any number of files; `role` is ignored and not stored. `labels` is an optional
   object mapping strings to strings: at most 32 entries, keys `[a-z0-9][a-z0-9._-]{0,63}`,
   values strings of at most 256 characters; anything else is `400 invalid_request`. Labels are
@@ -508,7 +589,7 @@ Rules per ecosystem:
   Worker adds `version`, `version_normalized` and `dist` itself when building the index.
 - **npm**: the `package.json` found inside the tarball (`package/package.json`), as a JSON
   object. `name` and `version` must equal the request's `name` and `version`. The Worker adds
-  `_id` and `dist` (`tarball` pointing to the Worker and `integrity` as
+  `_id` and `dist` (`tarball` pointing to the Worker, see 12.1, and `integrity` as
   `sha256-<base64>` of the verified digest) itself; fields starting with `_` are dropped.
 - **cargo**: one cargo sparse-index line without the fields the Worker computes (`cksum`,
   `yanked`, `v`), produced by the CLI from `cargo metadata`:
@@ -546,7 +627,7 @@ Rules per ecosystem:
     from crates.io use `https://github.com/rust-lang/crates.io-index`.
   - `features`: required object; `features2` optional object holding the features that use the
     `dep:` or `pkg?/feature` syntax, split exactly like `cargo publish` does. The Worker
-    always serves index lines with `v: 2`.
+    always serves index lines with `v: 2` (12.2).
   - `links`, `rust_version`: optional, string or `null`.
   - `cksum` is the `sha256` of the archive file.
 
@@ -585,6 +666,52 @@ Rules per ecosystem:
   - `description`, `authors`, `projectUrl`, `licenseExpression`: optional strings; `tags`:
     optional array of strings.
   - The Worker builds the registration and search responses (9.6, 9.7) from these fields.
+
+- **swift**:
+
+  ```json
+  {
+    "toolsVersion": "5.9",
+    "repositoryURL": "https://github.com/acme/networking",
+    "readmeURL": "https://github.com/acme/networking/blob/main/README.md",
+    "dumpPackage": { "name": "Networking", "dependencies": [], "…": "…" }
+  }
+  ```
+
+  - `toolsVersion`: required, the tools version of `Package.swift`.
+  - `repositoryURL`, `readmeURL`: optional strings; `repositoryURL` is what
+    `GET /swift/identifiers` matches (10.6).
+  - `dumpPackage`: required object, the JSON printed by `swift package dump-package`; its
+    `dependencies` feed transitive grants (5.3).
+
+- **maven**:
+
+  ```json
+  {
+    "groupId": "com.acme",
+    "artifactId": "sdk",
+    "version": "1.4.0",
+    "packaging": "jar",
+    "pom": "<?xml version=\"1.0\"?><project …>…</project>",
+    "dependencies": [
+      {
+        "groupId": "com.squareup.okhttp3",
+        "artifactId": "okhttp",
+        "version": "4.12.0",
+        "scope": "compile",
+        "optional": false
+      }
+    ]
+  }
+  ```
+
+  - `groupId`, `artifactId`, `version`: required, equal to the request's `name` and
+    `version`.
+  - `packaging`: required, the POM's `<packaging>` (`jar` when the POM has none).
+  - `pom`: required, the effective POM as an XML string (no `<parent>`, no unresolved
+    `${…}` properties).
+  - `dependencies`: required array; `scope` is `compile`, `runtime`, `provided`, `test` or
+    `import`; `optional` is a boolean; `version` is a version or a range as written.
 
 Example request (npm):
 
@@ -703,9 +830,19 @@ Request:
 
 The Worker runs `head()` on every staged file and compares it with the declaration, checks
 immutability again (for an upload with `append: true`, the rules of 6.4.1), copies the files
-to their final keys, writes the version manifest (an append adds its entries to `files` with a
+to their final keys (computing the adapter's extra digests on the way, see below), writes the
+version manifest (an append adds its entries to `files` with a
 conditional write, retried on conflict), rebuilds the package index (and npm dist-tags), and
 deletes the staged files.
+
+Extra digests: an adapter may declare a static list of algorithms (`digests`, any of `sha1`,
+`md5`, `sha512`) for ecosystems whose clients verify more than SHA-256. `init` records the
+list in the staging declaration, and `commit` computes those digests while streaming each
+staged object to its final key (a `DigestStream`) and stores them as `files[].digests`
+(lower-case hex) in the manifest. Listings (6.6–6.8) and the generic feed return `digests`
+when present; `reindex` (6.11) never recomputes them. `sha256` stays mandatory and separate:
+it is declared by the client, enforced by the presigned `PUT` and checked at `commit`. No
+adapter declares extra digests yet; they are reserved for Maven-like ecosystems.
 
 The rules are checked against the state at commit time. Without `append`, the first commit of
 a version wins and later ones get `409 version_exists`. With `append`, a commit that finds the
@@ -750,19 +887,23 @@ For generic:
 `version` is the stored version (normalised for nuget). `url` is the archive's download URL in
 the ecosystem's native protocol, or the version's URL in the generic feed:
 
-| Eco        | `url`                                                                      |
-| ---------- | -------------------------------------------------------------------------- |
-| `composer` | `<PUBLIC_URL>/composer/dist/<vendor>/<package>/<version>.zip`              |
-| `npm`      | `<PUBLIC_URL>/npm/<name>/-/<file>`                                         |
-| `cargo`    | `<PUBLIC_URL>/cargo/dl/<crate>/<version>`                                  |
-| `generic`  | `<PUBLIC_URL>/generic/<name>/<version>`                                    |
-| `nuget`    | `<PUBLIC_URL>/nuget/flat/<id>/<version>/<id>.<version>.nupkg` (lower case) |
+| Eco        | `url`                                                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `composer` | `<PUBLIC_URL>/composer/dist/<vendor>/<package>/<version>.zip`                                                                  |
+| `npm`      | `<PUBLIC_URL>/npm/<name>/-/<unscoped>-<version>.tgz`, whatever the uploaded file was called (12.1)                             |
+| `cargo`    | `<PUBLIC_URL>/cargo/dl/<crate>/<version>`                                                                                      |
+| `generic`  | `<PUBLIC_URL>/generic/<name>/<version>`                                                                                        |
+| `nuget`    | `<PUBLIC_URL>/nuget/flat/<id>/<version>/<id>.<version>.nupkg` (lower case)                                                     |
+| `swift`    | `<PUBLIC_URL>/swift/<scope>/<name>/<version>.zip`                                                                              |
+| `maven`    | `<PUBLIC_URL>/maven/<group/as/path>/<artifactId>/<version>/<file>` of the `archive`, or of the `.pom` when there is no archive |
 
 `files` lists the files added by this upload (for an append, only the appended ones; the status
 is `201` either way), each with its download URL. For generic that is
 `<PUBLIC_URL>/generic/<name>/<version>/<file>`; generic names are encoded as described in 8.1.
-For composer, npm, cargo and nuget the archive's entry has the same `url` as the response; the
-nuget `symbols` file has no download endpoint and its `url` is `null`.
+For composer, npm, cargo, nuget, swift and maven the archive's entry has the same `url` as the
+response; the nuget `symbols` file has no download endpoint and its `url` is `null`; a swift
+`manifest` file's `url` is `<PUBLIC_URL>/swift/<scope>/<name>/<version>/Package.swift`, with
+`?swift-version=<X>` for a variant; every maven file has its own path (11.3).
 
 Errors:
 
@@ -837,7 +978,7 @@ Response `200`:
 Packages are sorted by `eco` and then `name` (byte order); versions by precedence, highest
 first. The example above is an `admin` response; a `read` entry looks like this:
 
-````json
+```json
 {
   "eco": "npm",
   "name": "@acme/sdk",
@@ -854,7 +995,9 @@ first. The example above is an `admin` response; a `read` entry looks like this:
     { "name": "@acme/log", "constraints": ["~0.3.0", "^0.3.2"], "versions": ["0.3.5", "0.3.2"] }
   ]
 }
-``` For nuget, `name` is the id with the casing of its highest version's manifest.
+```
+
+For nuget and swift, `name` is the name with the casing of its highest version's manifest.
 
 ### 6.7 `GET /api/v1/packages/<eco>/<name>`
 
@@ -875,7 +1018,7 @@ Kind `read` or `admin`. Response `200`: one `Package` object (same filtering and
     }
   ]
 }
-````
+```
 
 Errors: `404 not_found` when the package does not exist or, for `read`, when no version of it
 is covered by an explicit grant (a package reachable only transitively is listed under the
@@ -886,8 +1029,10 @@ is covered by an explicit grant (a package reachable only transitively is listed
 Kind `admin`. No body. Marks the version as yanked: it disappears from the composer and npm
 indexes, is listed with `yanked: true` in the cargo index, is left out of the generic feed
 unless `?include=yanked` (section 8) and gets `listed: false` in the NuGet registration while
-the flat container keeps it (section 9). Its files stay downloadable, so consumers' lockfiles
-keep working. An npm dist-tag pointing at it moves to the highest remaining stable version.
+the flat container keeps it (section 9). For swift it carries a `problem` in the release list
+and its metadata answers `410` (section 10); for maven it disappears from
+`maven-metadata.xml` (section 11). Its files stay downloadable, so consumers' lockfiles keep
+working. An npm dist-tag pointing at it moves to the highest remaining stable version.
 Yanking an already yanked version succeeds. A yanked generic version is closed for appending.
 
 Response `200`: the `PackageVersion` plus `eco` and `name`:
@@ -935,6 +1080,7 @@ Errors: `404 not_found`.
 ### 6.11 `POST /api/v1/packages/<eco>/<name>/reindex`
 
 Kind `admin`. No body. Rebuilds the package's index files from the listing of its manifests.
+It does not touch the manifests themselves (for example, it never recomputes `digests`).
 
 Response `200`:
 
@@ -975,8 +1121,11 @@ Response `200`:
           "id": "c08e5b1f9a27",
           "type": "gh",
           "repository": "acme/shop-frontend",
+          "repository_id": "123456789",
+          "repository_owner_id": null,
           "ref": "refs/heads/main",
           "workflow": null,
+          "environment": null,
           "created": "2026-10-28T09:05:00Z",
           "expires": null
         }
@@ -1074,16 +1223,21 @@ Kind `admin`. Adds an auth entry.
 
 Request:
 
-| Field        | Type           | Required       | Description                                                      |
-| ------------ | -------------- | -------------- | ---------------------------------------------------------------- |
-| `type`       | string         | yes            | `key` or `gh`                                                    |
-| `expires`    | string \| null | no             | RFC 3339 or `YYYY-MM-DD`; default `null` (never)                 |
-| `repository` | string         | `gh`: yes      | `owner/repo`, matched exactly against the JWT `repository` claim |
-| `ref`        | string \| null | no (`gh` only) | e.g. `refs/heads/main` or `refs/tags/v1.2.3`; `null` = any       |
-| `workflow`   | string \| null | no (`gh` only) | matched exactly against the JWT `workflow` claim; `null` = any   |
+| Field                 | Type           | Required       | Description                                                                                                            |
+| --------------------- | -------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `type`                | string         | yes            | `key` or `gh`                                                                                                          |
+| `expires`             | string \| null | no             | RFC 3339 or `YYYY-MM-DD`; default `null` (never)                                                                       |
+| `repository`          | string         | `gh`: yes      | `owner/repo` or `owner/*` (2.5)                                                                                        |
+| `repository_id`       | string \| null | no (`gh` only) | digits only; `null` = any                                                                                              |
+| `repository_owner_id` | string \| null | no (`gh` only) | digits only; `null` = any                                                                                              |
+| `ref`                 | string \| null | no (`gh` only) | glob over the full ref, e.g. `refs/heads/main` or `refs/tags/v*`; `null` = any                                         |
+| `workflow`            | string \| null | no (`gh` only) | workflow file path, e.g. `.github/workflows/release.yml`, matched against the `workflow_ref` claim (2.5); `null` = any |
+| `environment`         | string \| null | no (`gh` only) | GitHub Actions environment name; `null` = any                                                                          |
 
-`repository`, `ref` or `workflow` on a `key` entry is `400 invalid_request`, as is a `gh`
-entry identical (same `repository`, `ref` and `workflow`) to an existing active one.
+Any of the `gh` fields on a `key` entry is `400 invalid_request`, as is a `gh` entry
+identical (all six fields equal) to an existing active one. For `publish` credentials, set at
+least `ref` (e.g. `refs/tags/v*`) or `workflow`, so that only the release workflow can
+publish. The `repository_id` of a public repository can be looked up with 6.19.
 
 Response `201` for `key`:
 
@@ -1099,8 +1253,27 @@ Response `201` for `key`:
 }
 ```
 
-For `gh` the response has `secret` only; the CI job builds its token as
-`<project>:gh.<jwt>`. Errors: `400 invalid_request`, `404 not_found`.
+For `gh` the response has `secret` only, echoing every field (`null` when not set):
+
+```json
+{
+  "secret": {
+    "id": "c08e5b1f9a27",
+    "type": "gh",
+    "repository": "acme/sdk",
+    "repository_id": "123456789",
+    "repository_owner_id": null,
+    "ref": "refs/tags/v*",
+    "workflow": ".github/workflows/release.yml",
+    "environment": null,
+    "created": "2026-10-28T09:05:00Z",
+    "expires": null
+  }
+}
+```
+
+The CI job builds its token as `<project>:gh.<jwt>` or `_:gh.<jwt>` (2.5). Errors:
+`400 invalid_request`, `404 not_found`.
 
 To rotate a secret, a client (the panel) calls this endpoint and then 6.18 with an `expires`
 in the future for every previously active `key` entry.
@@ -1131,16 +1304,35 @@ Default `expires` is now; a value in the past is treated as now. Response `200`:
 
 Errors: `400 invalid_request` (ambiguous prefix), `404 not_found`.
 
+### 6.19 `GET /api/v1/github/repository?name=<owner/repo>`
+
+Kind `admin`. Looks up a GitHub repository so that the panel can fill in `repository_id` and
+`repository_owner_id` of a `gh` entry without contacting GitHub from the browser (the panel's
+Content Security Policy only allows its own origin). The Worker calls
+`https://api.github.com/repos/<owner>/<repo>` without credentials, so only public repositories
+are found.
+
+Response `200`:
+
+```json
+{ "fullName": "acme/sdk", "id": "123456789", "ownerId": "98765" }
+```
+
+`fullName` has GitHub's casing; `id` and `ownerId` are strings of digits. Errors:
+`400 invalid_request` (missing `name` or not `owner/repo`), `404 not_found` (the repository is
+private or does not exist), `503 provider_unavailable` (any other failure of the GitHub API, e.g. a rate limit or an outage).
+
 ## 7. Client behaviour
 
 ### 7.1 Configuration
 
 The CLI reads the base URL from `--registry` or `REGISTRY_URL` and the token from `--token`
-or `REGISTRY_TOKEN`. With `--oidc`, it builds `<project>:gh.<jwt>` from a GitHub Actions OIDC
-token requested with audience `PUBLIC_URL`. `sreg auth` takes the project as `--project <p>`
-(see the spec); the publish commands take it as `--oidc-project <p>`, because
-`sreg nuget publish` already uses `--project` for the `.csproj`, and the same name is used on
-every publish command for consistency. It sends `Authorization: Bearer <token>`,
+or `REGISTRY_TOKEN`. With `--oidc`, it requests a GitHub Actions OIDC token with audience
+`PUBLIC_URL` and builds `<project>:gh.<jwt>` when a project is given, or `_:gh.<jwt>` when it
+is not, letting the Worker resolve the project from the `repository` claim (2.5). `sreg auth`
+takes the project as `--project <p>` (see the spec); the publish commands take it as
+`--oidc-project <p>`, because `sreg nuget publish` already uses `--project` for the `.csproj`,
+and the same name is used on every publish command for consistency. It sends `Authorization: Bearer <token>`,
 `X-Client-Version` and `Accept: application/json` on every API request, and
 `Authorization: Bearer <token>` on every request to the Worker's generic feed.
 
@@ -1156,6 +1348,8 @@ passed verbatim to the packing tool (`sreg cargo publish --version 1.2.0 -- --fe
 | `sreg npm publish [--version <v> \| --tag-prefix <p>] [--tag <t>] [--workspace <w>] [-- …]`                           | `npm pack`                                                                                           | `--json`, `--pack-destination <tmp>`, `-w <pkg>` from `--workspace`                 | `--ignore-scripts`                              |
 | `sreg cargo publish [--version <v> \| --tag-prefix <p>] [--package <crate>] [-- …]`                                   | `cargo package`                                                                                      | `--no-verify`, `--allow-dirty`, `-p <crate>` from `--package`, `--target-dir <tmp>` | `--features`, `--locked`, `--manifest-path`     |
 | `sreg nuget publish [--version <v> \| --tag-prefix <p>] [--project <csproj>] [--no-symbols] [-- …]`                   | `dotnet pack <project>`                                                                              | `-o <tmp>`, `-p:PackageVersion=<v>` from `--version`                                | `-c Release`, `--no-build`, `--include-symbols` |
+| `sreg swift publish [--version <v> \| --tag-prefix <p>] [--path <dir>]`                                               | `swift package archive-source -o <tmp>` and `swift package dump-package`                             | `-o <tmp>`                                                                          | –                                               |
+| `sreg maven publish [--version <v> \| --tag-prefix <p>] --from-dir <dir> [--coords <group:artifact>]`                 | none – the artifacts come from a local file repository                                               | –                                                                                   | –                                               |
 | `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... \| --spec files.json [--no-append]` | none – the files are ready                                                                           | –                                                                                   | –                                               |
 
 What each command sends to `init` (6.4):
@@ -1167,6 +1361,16 @@ What each command sends to `init` (6.4):
 - nuget: unpacks the `.nupkg` (a zip), reads the `.nuspec` into `manifest` and sends the
   `.nupkg` as `archive`, plus the `.snupkg` as `symbols` when `dotnet pack` produced one,
   unless `--no-symbols` is given.
+- swift: runs `swift package archive-source -o <tmp>` and `swift package dump-package`, and
+  sends the source archive as `archive` and `Package.swift` plus every `Package@swift-*.swift`
+  as `manifest` files; `manifest` carries the tools version, the dump and, when known, the
+  repository and README URLs.
+- maven: reads a local file repository produced by
+  `mvn deploy -DaltDeploymentRepository=local::file:./out` or by a Gradle `publish` to a
+  `file://` URL. It parses the `.pom` for the coordinates, `<packaging>` and
+  `<dependencies>`; the POM must be the effective POM, so a POM with `<parent>` or unresolved
+  `${…}` properties is refused with a hint to generate the effective POM. It sends every file
+  of the version directory except checksum files and `maven-metadata*.xml`.
 - generic: the given files with their `labels` and the `meta` as `manifest`. It sends
   `append: true` by default, so that every job of a CI matrix can add its files to the same
   version (6.4.1); `--no-append` sends `append: false` to require a fresh version.
@@ -1182,6 +1386,10 @@ any working directory:
   the crate, `--version` is refused; the version must be set in the workspace.
 - nuget: `--project <path to .csproj>`; a `.sln` is refused because it produces several
   packages.
+- swift: `--path <dir>`, the package directory.
+- maven: `--from-dir <dir>` points at the local file repository; `--coords <group:artifact>`
+  picks one artifact when it contains several, and `--version` (or the tag) selects the
+  version directory. `sreg maven publish` never edits `pom.xml`.
 - Version: `--version <v>`, or a git tag on `HEAD`. With `--tag-prefix <p>` (e.g. `foo/v`,
   `foo-v`) the CLI takes the tag on `HEAD` with that prefix; without `--tag-prefix` and
   `--version` it accepts only a `v<semver>` tag and refuses when `HEAD` has more than one.
@@ -1294,7 +1502,8 @@ do not apply. It exists only while `generic` is enabled in `ECOSYSTEMS`; otherwi
 - **Versions** are compared by semver precedence. `latest` is the highest non-yanked stable
   version covered by the credential's grants, computed on the fly from the manifests, or
   `null` when there is none.
-- A file entry is `{ name, size, sha256, labels, url }`; `labels` is always present (`{}` when
+- A file entry is `{ name, size, sha256, digests?, labels, url }`; `digests` only when the
+  version has them (6.5); `labels` is always present (`{}` when
   the file has none).
 
 ### 8.2 `GET /generic/`
@@ -1545,3 +1754,230 @@ sorted by id; `totalHits` counts all matches before `skip` and `take`.
 
 `version` is the highest considered version; `versions` lists every considered version.
 Download counts are not tracked and are always `0`.
+
+## 10. Swift registry (`/swift/…`)
+
+The Swift Package Registry protocol (SE-0292), as used by SwiftPM. The registry URL that
+clients configure is `<PUBLIC_URL>/swift`. It is not part of `/api/v1`: sections 1.2, 1.4 and
+3 do not apply. It exists only while `swift` is enabled in `ECOSYSTEMS`; otherwise every
+`/swift/…` path answers `404 not_found`.
+
+### 10.1 Conventions
+
+- **Authentication**: any form of 2.2; SwiftPM sends Basic (from
+  `swift package-registry login --username/--password`, the keychain or `.netrc`) or Bearer
+  (`--token`). Kind `read` sees the versions allowed by its `swift` grants, including
+  transitive access (5.3); kind `admin` sees everything; kind `publish` gets `403`. A missing
+  or invalid credential gets `401` with both `WWW-Authenticate: Basic realm="serverless-registry"`
+  and `WWW-Authenticate: Bearer realm="serverless-registry"`. A `read` credential without
+  access to the package gets `404`.
+- **Content negotiation**: every response carries `Content-Version: 1`. The Worker accepts
+  `Accept: application/vnd.swift.registry.v1+json` (and `…v1+zip`, `…v1+swift` for archives and
+  manifests); a missing `Accept`, or a generic one such as `application/json`, is tolerated.
+  An `Accept` naming another API version (e.g. `application/vnd.swift.registry.v2+json`)
+  answers `415 Unsupported Media Type`.
+- **Errors** are problem details (`Content-Type: application/problem+json`):
+  `{ "status": 404, "title": "Not Found", "detail": "…" }`.
+- **Paths**: `<scope>` and `<name>` are matched case-insensitively; responses use the casing
+  stored with the package. `Cache-Control: private, no-store` on every response.
+- **Yank**: a yanked release carries `problem` in the release list (10.2), its metadata answers
+  `410` (10.3), and its archive and manifests stay downloadable for `Package.resolved`.
+
+### 10.2 `GET /swift/<scope>/<name>`
+
+The releases covered by the grants:
+
+```json
+{
+  "releases": {
+    "1.2.0": { "url": "https://packages.example.com/swift/acme/Networking/1.2.0" },
+    "1.1.0": {
+      "url": "https://packages.example.com/swift/acme/Networking/1.1.0",
+      "problem": { "status": 410, "title": "Gone", "detail": "this release was yanked" }
+    }
+  }
+}
+```
+
+Errors: `404` when the package does not exist or no release is visible.
+
+### 10.3 `GET /swift/<scope>/<name>/<version>`
+
+Release metadata:
+
+```json
+{
+  "id": "acme.Networking",
+  "version": "1.2.0",
+  "resources": [
+    {
+      "name": "source-archive",
+      "type": "application/zip",
+      "checksum": "a2ac54cf25fbc1ad0028f03f0aa4b96833b83bb05a14e510892bb27dea4dc812"
+    }
+  ],
+  "metadata": {
+    "repositoryURLs": ["https://github.com/acme/networking"],
+    "readmeURL": "https://github.com/acme/networking/blob/main/README.md"
+  },
+  "publishedAt": "2026-10-28T10:12:00Z"
+}
+```
+
+`checksum` is the hex SHA-256 of the archive. `metadata.repositoryURLs` and
+`metadata.readmeURL` are present only when the manifest had `repositoryURL` / `readmeURL`.
+`Link` headers point at neighbouring releases among the visible, non-yanked ones:
+`rel="latest-version"` (the highest), `rel="successor-version"` (the next higher) and
+`rel="predecessor-version"` (the next lower), each omitted when there is none. A yanked release
+answers `410` with a problem body. Errors: `404`.
+
+### 10.4 `GET /swift/<scope>/<name>/<version>/Package.swift[?swift-version=X]`
+
+The content of a `manifest` file, verbatim, as `Content-Type: text/x-swift`. Without
+`swift-version` it is `Package.swift`. With `swift-version=X` it is `Package@swift-X.swift`
+when it exists, otherwise the variant with the highest version not above `X` (SwiftPM's own
+selection rule), otherwise `Package.swift`. Every response lists the other variants as
+`Link: <…/Package.swift?swift-version=5.9>; rel="alternate"; filename="Package@swift-5.9.swift"; swift-tools-version="5.9"`.
+Errors: `404`.
+
+### 10.5 `GET /swift/<scope>/<name>/<version>.zip`
+
+`302 Found` to a presigned `GET` URL of the source archive, valid for 15 minutes, with
+`Digest: sha-256=<base64 of the SHA-256>`. Yanked releases stay downloadable. SwiftPM does not
+forward `Authorization` to the storage host. Errors: `404`.
+
+### 10.6 `GET /swift/identifiers?url=<repo-url>`
+
+Maps a repository URL to package identities:
+
+```json
+{ "identifiers": ["acme.Networking"] }
+```
+
+The URL is compared case-insensitively with the `repositoryURL` of every visible package's
+manifests, with or without a trailing `.git`. Errors: `400` without `url`, `404` when no
+visible package matches.
+
+### 10.7 `POST /swift/login`
+
+`swift package-registry login` checks the credentials with this request. It answers `200` with
+an empty body for any valid credential, and `401` otherwise.
+
+## 11. Maven repository (`/maven/…`)
+
+The Maven 2 repository layout, as used by Maven and Gradle (Android included). Clients
+configure `<PUBLIC_URL>/maven` as the repository URL. It is not part of `/api/v1`: sections
+1.2, 1.4 and 3 do not apply. It exists only while `maven` is enabled in `ECOSYSTEMS`;
+otherwise every `/maven/…` path answers `404 not_found`.
+
+### 11.1 Conventions
+
+- **Authentication**: any form of 2.2; Maven sends Basic from `settings.xml`
+  (`<server><username>`/`<password>`), Gradle Basic from `credentials { username; password }`
+  or Bearer through `HttpHeaderCredentials`. Kind `read` sees the versions allowed by its
+  `maven` grants, including transitive access (5.3); kind `admin` sees everything; kind
+  `publish` gets `403`. A missing or invalid credential gets `401` with both
+  `WWW-Authenticate: Basic realm="serverless-registry"` and
+  `WWW-Authenticate: Bearer realm="serverless-registry"`, so that Maven sends its credentials.
+  A `read` credential without access to the package gets `404`.
+- **Paths**: `<group/as/path>` is the `groupId` with `.` replaced by `/`. The Worker parses a
+  path from its end: the last segment is the file name; `maven-metadata.xml` (and its
+  checksums) directly under `<group/as/path>/<artifactId>/` is the package metadata; otherwise
+  the segment before the file is the version and the one before it the `artifactId`.
+  Version-level `maven-metadata.xml` files (used only for snapshots) answer `404`.
+- **Responses**: `Cache-Control: private, no-store` on every response; error bodies follow
+  section 4.
+- **Yank**: a yanked version disappears from `maven-metadata.xml`; its files stay
+  downloadable under their full paths, which Maven and Gradle lockfiles use.
+
+### 11.2 `GET /maven/<group/as/path>/<artifactId>/maven-metadata.xml`
+
+Generated from the manifests of the visible, non-yanked versions, as
+`Content-Type: application/xml`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>com.acme</groupId>
+  <artifactId>sdk</artifactId>
+  <versioning>
+    <latest>1.5.0-rc1</latest>
+    <release>1.4.0</release>
+    <versions>
+      <version>1.3.0</version>
+      <version>1.4.0</version>
+      <version>1.5.0-rc1</version>
+    </versions>
+    <lastUpdated>20261028101200</lastUpdated>
+  </versioning>
+</metadata>
+```
+
+`<versions>` is in ascending `ComparableVersion` order; `<latest>` is the highest version,
+`<release>` the highest non-prerelease version (5.2), omitted when there is none;
+`<lastUpdated>` is the newest `published` of the listed versions as `yyyyMMddHHmmss` in UTC.
+`maven-metadata.xml.sha1`, `.md5`, `.sha256` and `.sha512` are computed from the generated XML
+(which depends on the credential) and returned as lower-case hex in `text/plain`. Errors:
+`404` when no version is visible.
+
+### 11.3 `GET /maven/<group/as/path>/<artifactId>/<version>/<file>`
+
+`302 Found` to a presigned `GET` URL of the file, valid for 15 minutes. Maven and Gradle do not
+forward `Authorization` to the storage host. Errors: `404` when the version is not visible or
+the file does not exist.
+
+### 11.4 `GET …/<version>/<file>.sha1|.md5|.sha256|.sha512`
+
+The digest of a version file as lower-case hex in `text/plain`: `.sha256` from the file's
+`sha256`, the others from its `digests` (6.5). Errors: `404` when the file or that digest does
+not exist.
+
+## 12. npm and cargo read protocols
+
+These details of the native npm and cargo protocols are implemented as described here; the
+spec describes the endpoints in general terms.
+
+Packages with no visible version: for a `read` credential, the npm packument and the composer
+`p2/<vendor>/<package>.json` answer `404` when the package name is outside the credential's
+grants and transitive closure (5.3). When the name is granted but no version of it is visible
+(for example all of them are yanked or outside the granted range), they answer `200` with an
+empty document: a packument whose `versions`, `dist-tags` and `time` are empty, and for
+composer `{ "packages": { "<name>": [] }, "minified": "composer/2.0" }`. The cargo index
+answers `404` in both cases, and the single-version endpoint `/npm/<name>/<version>` answers
+`404` whenever the version is not visible.
+
+### 12.1 npm (`/npm/…`)
+
+- **Packument** (`GET /npm/<@scope/name>`, also with `%2f`): exactly the keys `_id`, `name`,
+  `dist-tags`, `versions` and `time`. `versions` is in ascending version order; each entry is
+  the version's `package.json` without keys starting with `_`, plus `name`, `version`, `_id`
+  (`<name>@<version>`) and `dist: { tarball, integrity }` with `integrity` =
+  `sha256-<base64>`. `time` has `created`, `modified` and one entry per version. Yanked
+  versions are absent from `versions`, `time` and `dist-tags`.
+- **Tarball URL**: always `<PUBLIC_URL>/npm/<@scope/name>/-/<unscoped>-<version>.tgz`, whatever
+  the uploaded file was called. The route also accepts the `npm pack` form
+  `<scope>-<unscoped>-<version>.tgz`; both answer `302` to a presigned `GET`.
+- **Dist-tags** are not stored; they are derived from the manifests on every request (the tag
+  each version was published with, 6.4):
+  - every tag points at the highest visible version published with it;
+  - when no visible version asked for `latest`, `latest` falls back to the highest stable
+    version, and `next` likewise to the highest prerelease;
+  - other tags disappear when all their versions are hidden (yanked, deleted or not granted);
+  - an explicit `latest` on a lower or prerelease version is kept.
+- **Single version** (`GET /npm/<name>/<version-or-dist-tag>`): the version entry as in the
+  packument; `404` when the version (or the version the tag points at) is not visible.
+- **`GET /npm/-/ping`** answers `{}` and **`GET /npm/-/whoami`** answers
+  `{ "username": "<project>" }`, for any credential kind (`publish` included).
+
+### 12.2 cargo (`/cargo/…`)
+
+- **Crate names** are lower case, `^[a-z][a-z0-9_-]{0,63}$`; the `.crate` file of a version is
+  named `<name>-<version>.crate` (6.4).
+- **`GET /cargo/index/config.json`** requires a credential, like the rest of the registry.
+- **Index files**: one JSON line per version, in ascending version order, yanked versions
+  included (`"yanked": true`). The keys of a line, in this order: `name`, `vers`, `deps`,
+  `cksum`, `features`, `features2` (when present), `yanked`, `links` (when present),
+  `rust_version` (when present), `v` (always `2`).
+- **`GET /cargo/api/v1/crates/<name>`**:
+  `{ "crate": { "name", "max_version", "versions": [ { "num", "yanked" } ] } }`, versions
+  highest first.
