@@ -2,8 +2,9 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -159,6 +160,33 @@ pub struct Package {
     pub files: Vec<PackageFile>,
     /// Native manifest (composer, npm, cargo) or free-form metadata (generic).
     pub manifest: serde_json::Value,
+    /// Temporary directory holding files the packager produced, kept alive as long as
+    /// the package (or a clone of it) exists; `None` when the files belong to the user.
+    pub workdir: Option<Workdir>,
+}
+
+/// A temporary directory for the files a packager produces (archives built from the
+/// project). It is deleted when the last clone is dropped.
+#[derive(Debug, Clone)]
+pub struct Workdir(Arc<tempfile::TempDir>);
+
+impl Workdir {
+    /// Creates a new, empty temporary directory.
+    pub fn new() -> Result<Self, Error> {
+        let dir = tempfile::Builder::new().prefix("sreg-").tempdir()?;
+        Ok(Workdir(Arc::new(dir)))
+    }
+
+    /// The directory's path.
+    pub fn path(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+impl PartialEq for Workdir {
+    fn eq(&self, other: &Self) -> bool {
+        self.path() == other.path()
+    }
 }
 
 /// Turns a project directory into a publishable [`Package`].
@@ -210,6 +238,20 @@ mod tests {
                 .name,
             "sdk-2.3.1.tgz"
         );
+    }
+
+    #[test]
+    fn workdir_is_removed_with_its_last_clone() {
+        let workdir = Workdir::new().unwrap();
+        let clone = workdir.clone();
+        let path = workdir.path().to_path_buf();
+        assert!(path.is_dir());
+        assert_eq!(workdir, clone);
+
+        drop(workdir);
+        assert!(path.is_dir());
+        drop(clone);
+        assert!(!path.exists());
     }
 
     #[test]

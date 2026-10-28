@@ -22,4 +22,4 @@ mod test_env;
 
 pub use client::Client;
 pub use error::{Error, Result};
-pub use packager::{Ecosystem, Package, PackageFile, PackageOptions, Packager};
+pub use packager::{Ecosystem, Package, PackageFile, PackageOptions, Packager, Workdir};

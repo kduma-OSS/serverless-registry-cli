@@ -81,6 +81,7 @@ impl Packager for GenericPackager {
             version: version.to_owned(),
             files,
             manifest: serde_json::Value::Object(self.meta.clone()),
+            workdir: None,
         })
     }
 }
