@@ -1,0 +1,165 @@
+{
+  "packages": [
+    {
+      "name": "acme-core",
+      "version": "@CORE_VERSION@",
+      "id": "path+file://@ROOT@/core#acme-core@@CORE_VERSION@",
+      "license": "MIT",
+      "description": "Core of the Acme SDK",
+      "source": null,
+      "dependencies": [
+        {
+          "name": "acme-util",
+          "source": null,
+          "req": "^0.2",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "target": null,
+          "registry": "sparse+https://packages.example.com/cargo/",
+          "path": "@ROOT@/util"
+        },
+        {
+          "name": "serde_json",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "req": "^1",
+          "kind": null,
+          "rename": "json",
+          "optional": true,
+          "uses_default_features": false,
+          "features": [],
+          "target": null,
+          "registry": null
+        },
+        {
+          "name": "serde",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "req": "^1.0",
+          "kind": null,
+          "rename": null,
+          "optional": true,
+          "uses_default_features": true,
+          "features": [
+            "derive"
+          ],
+          "target": null,
+          "registry": null
+        },
+        {
+          "name": "tracing",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "req": "^0.1",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "target": null,
+          "registry": null
+        },
+        {
+          "name": "acme-helper",
+          "source": null,
+          "req": "*",
+          "kind": "dev",
+          "rename": null,
+          "optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "target": null,
+          "registry": null,
+          "path": "@ROOT@/helper"
+        },
+        {
+          "name": "cc",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "req": "^1",
+          "kind": "build",
+          "rename": null,
+          "optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "target": null,
+          "registry": null
+        },
+        {
+          "name": "libc",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "req": "^0.2",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "target": "cfg(unix)",
+          "registry": null
+        }
+      ],
+      "targets": [],
+      "features": {
+        "default": [
+          "std"
+        ],
+        "full": [
+          "std",
+          "json"
+        ],
+        "json": [
+          "dep:json",
+          "serde?/std"
+        ],
+        "serde": [
+          "dep:serde"
+        ],
+        "std": []
+      },
+      "manifest_path": "@ROOT@/core/Cargo.toml",
+      "links": "acme",
+      "rust_version": "1.75",
+      "edition": "2021",
+      "publish": null
+    },
+    {
+      "name": "acme-util",
+      "version": "0.2.0",
+      "id": "path+file://@ROOT@/util#acme-util@0.2.0",
+      "license": "MIT",
+      "description": "Utilities of the Acme SDK",
+      "source": null,
+      "dependencies": [],
+      "targets": [],
+      "features": {},
+      "manifest_path": "@ROOT@/util/Cargo.toml",
+      "links": null,
+      "rust_version": null,
+      "edition": "2021",
+      "publish": null
+    },
+    {
+      "name": "acme-helper",
+      "version": "0.0.0",
+      "id": "path+file://@ROOT@/helper#acme-helper@0.0.0",
+      "license": null,
+      "description": null,
+      "source": null,
+      "dependencies": [],
+      "targets": [],
+      "features": {},
+      "manifest_path": "@ROOT@/helper/Cargo.toml",
+      "links": null,
+      "rust_version": null,
+      "edition": "2021",
+      "publish": []
+    }
+  ],
+  "workspace_members": [
+    "path+file://@ROOT@/core#acme-core@@CORE_VERSION@",
+    "path+file://@ROOT@/util#acme-util@0.2.0",
+    "path+file://@ROOT@/helper#acme-helper@0.0.0"
+  ],
+  "workspace_root": "@ROOT@",
+  "target_directory": "@ROOT@/target",
+  "version": 1
+}

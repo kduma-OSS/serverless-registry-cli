@@ -1,0 +1,29 @@
+[package]
+name = "acme-core"
+version = "1.4.0" # bumped by the release workflow
+edition = "2021"
+rust-version = "1.75"
+links = "acme"
+description = "Core of the Acme SDK"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }
+json = { package = "serde_json", version = "1", optional = true, default-features = false }
+acme-util = { path = "../util", version = "0.2", registry = "sreg" }
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+acme-helper = { path = "../helper" }
+
+[build-dependencies]
+cc = "1"
+
+[features]
+default = ["std"]
+std = []
+json = ["dep:json", "serde?/std"]
+full = ["std", "json"]

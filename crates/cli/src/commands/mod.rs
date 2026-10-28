@@ -73,7 +73,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Cargo {
             command: CargoCommand::Publish(args),
         } => {
-            let packager = sreg_eco_cargo::CargoPackager;
+            let packager = sreg_eco_cargo::CargoPackager::new().package_name(args.package.clone());
             publish::run_packager(
                 global,
                 &out,

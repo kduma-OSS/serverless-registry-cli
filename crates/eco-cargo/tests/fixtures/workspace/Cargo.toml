@@ -1,0 +1,8 @@
+# A virtual workspace with three crates, used by the fake `cargo` tests.
+[workspace]
+resolver = "2"
+members = ["core", "util", "helper"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"

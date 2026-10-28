@@ -1,0 +1,6 @@
+[package]
+name = "acme-util"
+version.workspace = true
+edition.workspace = true
+description = "Utilities of the Acme SDK"
+license = "MIT"

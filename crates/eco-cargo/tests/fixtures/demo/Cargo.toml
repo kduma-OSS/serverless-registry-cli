@@ -1,0 +1,16 @@
+# A crate without dependencies, packaged with the real `cargo` in the tests.
+[package]
+name = "acme-demo"
+version = "0.1.0" # bumped by the release workflow
+edition = "2021"
+rust-version = "1.70"
+description = "Demo crate for the sreg tests"
+license = "MIT"
+
+[features]
+default = ["std"]
+std = []
+extra = ["std"]
+
+# Its own workspace, so that cargo does not look for one above the fixture.
+[workspace]

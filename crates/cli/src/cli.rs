@@ -238,6 +238,12 @@ pub struct CargoPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
 
+    /// Publish this member of the workspace around the current directory:
+    /// `cargo package -p <CRATE>` (default: the crate of the current directory, or the
+    /// only crate of the workspace)
+    #[arg(long, value_name = "CRATE")]
+    pub package: Option<String>,
+
     /// Extra arguments passed verbatim to `cargo package`
     #[arg(last = true, value_name = "CARGO_ARGS")]
     pub cargo_args: Vec<std::ffi::OsString>,
@@ -504,6 +510,17 @@ mod tests {
             panic!("expected cargo publish");
         };
         assert_eq!(args.cargo_args, ["--features", "x"]);
+        assert_eq!(args.package, None);
+
+        let cli =
+            Cli::try_parse_from(["sreg", "cargo", "publish", "--package", "acme-core"]).unwrap();
+        let Command::Cargo {
+            command: CargoCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected cargo publish");
+        };
+        assert_eq!(args.package.as_deref(), Some("acme-core"));
     }
 
     #[cfg(all(feature = "npm", feature = "nuget"))]
