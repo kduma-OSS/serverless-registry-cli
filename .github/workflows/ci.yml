@@ -65,6 +65,17 @@ jobs:
       - name: Lint the action scripts
         run: shellcheck action/*.sh
 
+  scripts:
+    name: Release scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test the version bump script
+        run: node --test 'scripts/*.test.mjs'
+
   msrv:
     name: Minimum supported Rust version
     runs-on: ubuntu-latest
