@@ -42,7 +42,15 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             command: ComposerCommand::Publish(args),
         } => {
             let packager = sreg_eco_composer::ComposerPackager::new();
-            publish::run_packager(global, &out, &packager, &args.publish, None, Vec::new()).await
+            publish::run_packager(
+                global,
+                &out,
+                &packager,
+                &args.publish,
+                None,
+                &args.passthrough,
+            )
+            .await
         }
         #[cfg(feature = "npm")]
         Command::Npm {
@@ -55,7 +63,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 &packager,
                 &args.publish,
                 args.tag.clone(),
-                Vec::new(),
+                &args.npm_args,
             )
             .await
         }
@@ -70,7 +78,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 &packager,
                 &args.publish,
                 None,
-                args.cargo_args.clone(),
+                &args.cargo_args,
             )
             .await
         }
@@ -87,7 +95,15 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             command: NugetCommand::Publish(args),
         } => {
             let packager = sreg_eco_nuget::NugetPackager;
-            publish::run_packager(global, &out, &packager, &args.publish, None, Vec::new()).await
+            publish::run_packager(
+                global,
+                &out,
+                &packager,
+                &args.publish,
+                None,
+                &args.dotnet_args,
+            )
+            .await
         }
     }
 }

@@ -1,6 +1,5 @@
 //! The `publish` commands: package, then `init`, upload and `commit`.
 
-use anyhow::Context;
 use serde::Serialize;
 use sreg_core::models::PublishCommitResponse;
 use sreg_core::publish::{publish, PublishOptions, PublishOutcome};
@@ -37,9 +36,19 @@ pub async fn run_packager(
     packager: &dyn Packager,
     args: &PublishArgs,
     tag: Option<String>,
-    extra_args: Vec<String>,
+    extra_args: &[std::ffi::OsString],
 ) -> anyhow::Result<()> {
+    use anyhow::Context;
+
     let eco = packager.ecosystem();
+    let extra_args = extra_args
+        .iter()
+        .map(|arg| {
+            arg.to_str().map(str::to_owned).ok_or_else(|| {
+                anyhow::anyhow!("the argument {arg:?} after `--` is not valid UTF-8")
+            })
+        })
+        .collect::<anyhow::Result<Vec<String>>>()?;
     let opts = PackageOptions {
         path: args.path.clone(),
         version: args.version.clone(),

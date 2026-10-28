@@ -192,6 +192,10 @@ pub enum ComposerCommand {
 pub struct ComposerPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
+
+    /// Composer packaging runs no external tool; arguments after `--` are rejected
+    #[arg(last = true, hide = true, value_name = "ARGS")]
+    pub passthrough: Vec<std::ffi::OsString>,
 }
 
 #[cfg(feature = "npm")]
@@ -210,6 +214,10 @@ pub struct NpmPublishArgs {
     /// Distribution tag (defaults to `latest`, or `next` for prereleases)
     #[arg(long, value_name = "TAG")]
     pub tag: Option<String>,
+
+    /// Extra arguments passed verbatim to `npm pack`
+    #[arg(last = true, value_name = "NPM_ARGS")]
+    pub npm_args: Vec<std::ffi::OsString>,
 }
 
 #[cfg(feature = "cargo")]
@@ -225,9 +233,9 @@ pub struct CargoPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
 
-    /// Extra arguments passed to `cargo package`
+    /// Extra arguments passed verbatim to `cargo package`
     #[arg(last = true, value_name = "CARGO_ARGS")]
-    pub cargo_args: Vec<String>,
+    pub cargo_args: Vec<std::ffi::OsString>,
 }
 
 #[cfg(feature = "nuget")]
@@ -242,6 +250,10 @@ pub enum NugetCommand {
 pub struct NugetPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
+
+    /// Extra arguments passed verbatim to `dotnet pack`
+    #[arg(last = true, value_name = "DOTNET_ARGS")]
+    pub dotnet_args: Vec<std::ffi::OsString>,
 }
 
 #[cfg(feature = "generic")]
@@ -301,6 +313,10 @@ pub struct GenericPublishArgs {
     /// Exit with 0 instead of 2 when the version is already published (409)
     #[arg(long)]
     pub skip_existing: bool,
+
+    /// Generic publishing runs no external tool; arguments after `--` are rejected
+    #[arg(last = true, hide = true, value_name = "ARGS")]
+    pub passthrough: Vec<std::ffi::OsString>,
 
     #[command(flatten)]
     pub oidc: OidcArgs,
@@ -479,6 +495,56 @@ mod tests {
             panic!("expected cargo publish");
         };
         assert_eq!(args.cargo_args, ["--features", "x"]);
+    }
+
+    #[cfg(all(feature = "npm", feature = "nuget"))]
+    #[test]
+    fn npm_and_nuget_publish_pass_trailing_arguments() {
+        let cli =
+            Cli::try_parse_from(["sreg", "npm", "publish", "--", "--workspace", "a"]).unwrap();
+        let Command::Npm {
+            command: NpmCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected npm publish");
+        };
+        assert_eq!(args.npm_args, ["--workspace", "a"]);
+
+        let cli = Cli::try_parse_from([
+            "sreg",
+            "nuget",
+            "publish",
+            "--version",
+            "1.0.0",
+            "--",
+            "-c",
+            "Release",
+        ])
+        .unwrap();
+        let Command::Nuget {
+            command: NugetCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected nuget publish");
+        };
+        assert_eq!(args.dotnet_args, ["-c", "Release"]);
+    }
+
+    #[cfg(feature = "generic")]
+    #[test]
+    fn generic_publish_keeps_files_and_trailing_arguments_apart() {
+        let cli = Cli::try_parse_from([
+            "sreg", "generic", "publish", "cli", "1.0.0", "a.zip", "b.zip", "--", "--x",
+        ])
+        .unwrap();
+        let Command::Generic {
+            command: GenericCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected generic publish");
+        };
+        assert_eq!(args.files, [PathBuf::from("a.zip"), PathBuf::from("b.zip")]);
+        assert_eq!(args.passthrough, ["--x"]);
     }
 
     #[test]

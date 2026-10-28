@@ -22,6 +22,12 @@ pub async fn publish(
     out: &Output,
     args: &GenericPublishArgs,
 ) -> anyhow::Result<()> {
+    if !args.passthrough.is_empty() {
+        bail!(
+            "generic publish runs no packaging tool and takes no arguments after `--`; \
+             list the files before `--`"
+        );
+    }
     let files = match &args.spec {
         Some(spec) => {
             let json = std::fs::read_to_string(spec)
