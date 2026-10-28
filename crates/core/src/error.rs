@@ -42,6 +42,21 @@ pub enum Error {
         min: String,
     },
 
+    /// The presigned upload URL was rejected with `403`, usually because it expired.
+    ///
+    /// The caller can request a new URL with `publish/init` and try again.
+    #[error("the storage rejected the upload URL (403); it has probably expired")]
+    UploadExpired,
+
+    /// The storage rejected the archive upload.
+    #[error("the storage rejected the upload with status {status} ({code})")]
+    Upload {
+        /// HTTP status code returned by the storage.
+        status: u16,
+        /// Error code reported by the storage, or `unknown`.
+        code: String,
+    },
+
     /// The version being published already exists in the registry (`409`).
     #[error("this version already exists in the registry")]
     VersionExists,
