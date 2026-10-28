@@ -62,6 +62,10 @@ pub async fn run_packager(
             args.path.display()
         )
     })?;
+    // Notes go to stderr, so that `--json` output stays a single document.
+    for note in &package.notes {
+        eprintln!("note: {note}");
+    }
     let options = PublishOptions {
         dry_run: args.dry_run,
         tag,

@@ -67,6 +67,64 @@ impl<'a, R: CommandRunner + ?Sized> Git<'a, R> {
         tracing::debug!(tag, version, "version from the tag on HEAD");
         Ok(version)
     }
+
+    /// The version a packager that can rewrite its manifest (npm, cargo, nuget) should
+    /// publish, or `None` to keep the version declared in the manifest.
+    ///
+    /// - `version` (the `--version` flag) wins;
+    /// - with `tag_prefix`, the tag `<prefix><semver>` on `HEAD` is required;
+    /// - otherwise a single `v<semver>` tag on `HEAD` is used when there is one, and
+    ///   `None` is returned when there is none or the directory is not in a git work tree;
+    ///   several such tags are an error.
+    pub fn requested_version(
+        &self,
+        version: Option<&str>,
+        tag_prefix: Option<&str>,
+    ) -> Result<Option<String>> {
+        match (version, tag_prefix) {
+            (Some(_), Some(_)) => Err(Error::InvalidInput(
+                "--version and --tag-prefix cannot be combined".into(),
+            )),
+            (Some(version), None) => Ok(Some(version.to_owned())),
+            (None, Some(prefix)) => {
+                if self.toplevel()?.is_none() {
+                    return Err(Error::InvalidInput(format!(
+                        "--tag-prefix needs a git repository, but `{}` is not inside one",
+                        self.dir.display()
+                    )));
+                }
+                self.release_version(Some(prefix)).map(Some)
+            }
+            (None, None) => {
+                if self.toplevel()?.is_none() {
+                    return Ok(None);
+                }
+                let tags = self.head_tags()?;
+                let found = find_release_tag(&tags, None)?;
+                if let Some((tag, version)) = &found {
+                    tracing::debug!(tag, version, "version from the tag on HEAD");
+                }
+                Ok(found.map(|(_, version)| version))
+            }
+        }
+    }
+}
+
+/// Like [`select_release_tag`], but `Ok(None)` when no tag on `HEAD` qualifies.
+pub fn find_release_tag(
+    tags: &[String],
+    tag_prefix: Option<&str>,
+) -> Result<Option<(String, String)>> {
+    let prefix = tag_prefix.unwrap_or(DEFAULT_TAG_PREFIX);
+    let qualifies = |tag: &String| {
+        tag.strip_prefix(prefix)
+            .is_some_and(|version| semver::Version::parse(version).is_ok())
+    };
+    if tags.iter().any(qualifies) {
+        select_release_tag(tags, tag_prefix).map(Some)
+    } else {
+        Ok(None)
+    }
 }
 
 /// Picks the release tag among the tags on `HEAD` and returns it with its version.
@@ -203,6 +261,95 @@ mod tests {
         assert!(Git::new(&fake, Path::new("."))
             .release_version(None)
             .is_err());
+    }
+
+    #[test]
+    fn find_release_tag_allows_none() {
+        assert_eq!(
+            find_release_tag(&tags(&["1.0.0", "x"]), None).unwrap(),
+            None
+        );
+        assert_eq!(
+            find_release_tag(&tags(&["v1.0.0"]), None).unwrap(),
+            Some(("v1.0.0".to_owned(), "1.0.0".to_owned()))
+        );
+        assert!(find_release_tag(&tags(&["v1.0.0", "v2.0.0"]), None).is_err());
+    }
+
+    /// Answers `git rev-parse` with `toplevel` and `git tag` with `tags`.
+    struct Repo {
+        toplevel: Option<&'static str>,
+        tags: &'static str,
+    }
+
+    impl CommandRunner for Repo {
+        fn run(&self, _program: &str, args: &[&str], _cwd: &Path) -> Result<CommandOutput> {
+            Ok(match (args.first(), self.toplevel) {
+                (Some(&"rev-parse"), Some(top)) => CommandOutput::success(top),
+                (Some(&"rev-parse"), None) => CommandOutput::failure(128, "fatal: not a repo"),
+                _ => CommandOutput::success(self.tags),
+            })
+        }
+    }
+
+    #[test]
+    fn requested_version_prefers_the_flag_then_the_tag() {
+        let dir = Path::new(".");
+        let repo = Repo {
+            toplevel: Some("/repo"),
+            tags: "v1.2.3\nsdk/v2.0.0\n",
+        };
+        let git = Git::new(&repo, dir);
+        assert_eq!(
+            git.requested_version(Some("9.9.9"), None)
+                .unwrap()
+                .as_deref(),
+            Some("9.9.9")
+        );
+        assert_eq!(
+            git.requested_version(None, None).unwrap().as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(
+            git.requested_version(None, Some("sdk/v"))
+                .unwrap()
+                .as_deref(),
+            Some("2.0.0")
+        );
+        assert!(git.requested_version(None, Some("api/v")).is_err());
+        assert!(git.requested_version(Some("1.0.0"), Some("sdk/v")).is_err());
+
+        let untagged = Repo {
+            toplevel: Some("/repo"),
+            tags: "release\n",
+        };
+        assert_eq!(
+            Git::new(&untagged, dir)
+                .requested_version(None, None)
+                .unwrap(),
+            None
+        );
+        let ambiguous = Repo {
+            toplevel: Some("/repo"),
+            tags: "v1.0.0\nv1.0.1\n",
+        };
+        assert!(Git::new(&ambiguous, dir)
+            .requested_version(None, None)
+            .is_err());
+        let outside = Repo {
+            toplevel: None,
+            tags: "",
+        };
+        assert_eq!(
+            Git::new(&outside, dir)
+                .requested_version(None, None)
+                .unwrap(),
+            None
+        );
+        let err = Git::new(&outside, dir)
+            .requested_version(None, Some("sdk/v"))
+            .unwrap_err();
+        assert!(err.to_string().contains("needs a git repository"), "{err}");
     }
 
     #[test]

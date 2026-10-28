@@ -46,6 +46,7 @@ async fn fixture() -> Fixture {
         files: vec![PackageFile::archive(file.path(), "sdk-2.3.1.tgz".into()).unwrap()],
         manifest: json!({ "name": "@acme/sdk", "version": "2.3.1" }),
         workdir: None,
+        notes: Vec::new(),
     };
 
     Fixture {
@@ -438,6 +439,7 @@ async fn uploads_every_file_of_a_generic_version() {
         files,
         manifest: json!({ "channel": "stable" }),
         workdir: None,
+        notes: Vec::new(),
     };
     let expires = format_timestamp(OffsetDateTime::now_utc() + TEN_MINUTES).unwrap();
     let uploads: Vec<_> = ["cli-macos.tar.gz", "cli-linux.tar.gz"]

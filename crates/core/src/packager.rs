@@ -168,6 +168,9 @@ pub struct Package {
     /// Temporary directory holding files the packager produced, kept alive as long as
     /// the package (or a clone of it) exists; `None` when the files belong to the user.
     pub workdir: Option<Workdir>,
+    /// Changes the packager made to the project before packaging it, such as the
+    /// version written into `package.json` or `Cargo.toml`; the CLI reports them.
+    pub notes: Vec<String>,
 }
 
 /// A temporary directory for the files a packager produces (archives built from the

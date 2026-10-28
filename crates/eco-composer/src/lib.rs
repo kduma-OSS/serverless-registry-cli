@@ -118,6 +118,7 @@ impl<R: CommandRunner> Packager for ComposerPackager<R> {
             files: vec![file],
             manifest,
             workdir: Some(workdir),
+            notes: Vec::new(),
         })
     }
 }

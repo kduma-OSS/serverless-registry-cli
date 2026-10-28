@@ -82,6 +82,7 @@ impl Packager for GenericPackager {
             files,
             manifest: serde_json::Value::Object(self.meta.clone()),
             workdir: None,
+            notes: Vec::new(),
         })
     }
 }
