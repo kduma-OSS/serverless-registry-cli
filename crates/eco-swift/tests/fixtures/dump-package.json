@@ -1,0 +1,122 @@
+{
+  "cLanguageStandard" : null,
+  "cxxLanguageStandard" : null,
+  "dependencies" : [
+    {
+      "sourceControl" : [
+        {
+          "identity" : "swift-log",
+          "location" : {
+            "remote" : [
+              {
+                "urlString" : "https://github.com/apple/swift-log.git"
+              }
+            ]
+          },
+          "productFilter" : null,
+          "requirement" : {
+            "range" : [
+              {
+                "lowerBound" : "1.5.0",
+                "upperBound" : "2.0.0"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "registry" : [
+        {
+          "identity" : "acme.networking",
+          "productFilter" : null,
+          "requirement" : {
+            "range" : [
+              {
+                "lowerBound" : "2.0.0",
+                "upperBound" : "3.0.0"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "name" : "DemoKit",
+  "packageKind" : {
+    "root" : [
+      "/work/DemoKit"
+    ]
+  },
+  "pkgConfig" : null,
+  "platforms" : [
+    {
+      "options" : [
+      ],
+      "platformName" : "macos",
+      "version" : "12.0"
+    }
+  ],
+  "products" : [
+    {
+      "name" : "DemoKit",
+      "settings" : [
+      ],
+      "targets" : [
+        "DemoKit"
+      ],
+      "type" : {
+        "library" : [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "providers" : null,
+  "swiftLanguageVersions" : null,
+  "targets" : [
+    {
+      "dependencies" : [
+        {
+          "product" : [
+            "Logging",
+            "swift-log",
+            null,
+            null
+          ]
+        }
+      ],
+      "exclude" : [
+      ],
+      "name" : "DemoKit",
+      "packageAccess" : true,
+      "resources" : [
+      ],
+      "settings" : [
+      ],
+      "type" : "regular"
+    },
+    {
+      "dependencies" : [
+        {
+          "byName" : [
+            "DemoKit",
+            null
+          ]
+        }
+      ],
+      "exclude" : [
+      ],
+      "name" : "DemoKitTests",
+      "packageAccess" : true,
+      "resources" : [
+      ],
+      "settings" : [
+      ],
+      "type" : "test"
+    }
+  ],
+  "toolsVersion" : {
+    "_version" : "5.9.0"
+  }
+}

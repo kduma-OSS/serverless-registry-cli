@@ -1756,7 +1756,12 @@ dependencies = [
 name = "sreg-eco-swift"
 version = "0.1.0"
 dependencies = [
+ "semver",
+ "serde_json",
  "sreg-core",
+ "tempfile",
+ "tracing",
+ "zip",
 ]
 
 [[package]]

@@ -95,7 +95,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Swift {
             command: SwiftCommand::Publish(args),
         } => {
-            let packager = sreg_eco_swift::SwiftPackager;
+            let packager = sreg_eco_swift::SwiftPackager::new();
             publish::run_packager(
                 global,
                 &out,
