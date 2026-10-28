@@ -282,6 +282,9 @@ pub struct FileEntry {
     pub size: u64,
     /// Lower-case hex SHA-256.
     pub sha256: String,
+    /// Extra digests computed by the registry (maven: `sha1`, `md5`, `sha512`), hex.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub digests: BTreeMap<String, String>,
     /// Role of the file, e.g. `archive`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
@@ -312,6 +315,20 @@ pub struct PackageEntry {
     pub name: String,
     /// Versions, highest first.
     pub versions: Vec<VersionEntry>,
+    /// `read` credentials only: what the grant opens transitively (docs/api.md 6.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependencies: Option<Vec<PackageDependency>>,
+}
+
+/// A package a `read` grant opens transitively, with the versions it opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageDependency {
+    /// Package name.
+    pub name: String,
+    /// The declared constraints that lead to it.
+    pub constraints: Vec<String>,
+    /// The versions opened, highest first.
+    pub versions: Vec<String>,
 }
 
 /// `GET /api/v1/packages`.
@@ -378,6 +395,9 @@ pub struct GenericFeedFile {
     pub size: u64,
     /// Lower-case hex SHA-256.
     pub sha256: String,
+    /// Extra digests computed by the registry, hex; only when the version has them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub digests: BTreeMap<String, String>,
     /// Labels of the file.
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
@@ -948,6 +968,30 @@ mod tests {
         assert!(response.version.yanked);
         assert_eq!(response.version.version, "2.3.1");
         assert_eq!(response.version.files[0].role.as_deref(), Some("archive"));
+    }
+
+    #[test]
+    fn package_listing_keeps_digests_and_dependencies() {
+        let body = json!({
+            "eco": "maven", "name": "com.acme:sdk",
+            "versions": [{
+                "version": "1.4.0", "published": "2026-10-28T10:12:00Z", "yanked": false,
+                "files": [{
+                    "name": "sdk-1.4.0.jar", "size": 3, "sha256": "ab", "role": "archive",
+                    "digests": { "md5": "cd", "sha1": "ef", "sha512": "01" }
+                }]
+            }],
+            "dependencies": [
+                { "name": "com.acme:core", "constraints": ["[1.2.0]"], "versions": ["1.2.0"] }
+            ]
+        });
+        let entry: PackageEntry = serde_json::from_value(body.clone()).unwrap();
+        assert_eq!(entry.versions[0].files[0].digests["sha1"], "ef");
+        assert_eq!(
+            entry.dependencies.as_ref().unwrap()[0].constraints,
+            ["[1.2.0]"]
+        );
+        assert_eq!(serde_json::to_value(&entry).unwrap(), body);
     }
 
     #[test]

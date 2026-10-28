@@ -34,6 +34,7 @@ fn feed_file(registry: &MockServer, sha256: &str) -> GenericFeedFile {
         name: "cli-linux.tar.gz".into(),
         size: CONTENT.len() as u64,
         sha256: sha256.into(),
+        digests: Default::default(),
         labels: [("os".to_owned(), "linux".to_owned())].into(),
         url: format!(
             "{}/generic/tools%2Fcli/1.0.0/cli-linux.tar.gz",
