@@ -4,7 +4,7 @@
 
 use std::process::{Command, Stdio};
 
-use sreg_core::login::{IssuedToken, LoginPurpose, LoginSession};
+use sreg_core::login::{IssuedToken, LoginPurpose, LoginSession, PackageScope};
 
 use crate::cli::GlobalArgs;
 use crate::context;
@@ -47,7 +47,25 @@ fn describe(purpose: &LoginPurpose) -> String {
             }
             text
         }
+        LoginPurpose::Yank { scopes } => list("Requesting an admin token to YANK:", scopes),
+        LoginPurpose::Delete { scopes } => list("Requesting an admin token to DELETE:", scopes),
     }
+}
+
+fn list(heading: &str, scopes: &[PackageScope]) -> String {
+    let mut text = heading.to_owned();
+    for scope in scopes {
+        match &scope.version {
+            Some(version) => {
+                text.push_str(&format!("\n  {} {} {}", scope.eco, scope.package, version))
+            }
+            None => text.push_str(&format!(
+                "\n  {} {} (the whole package, every version)",
+                scope.eco, scope.package
+            )),
+        }
+    }
+    text
 }
 
 /// Opens `url` in the default browser. Best effort: the URL is printed anyway, and a

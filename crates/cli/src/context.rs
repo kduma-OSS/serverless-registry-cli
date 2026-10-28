@@ -61,15 +61,6 @@ pub async fn client_with(
 /// A client authenticated with a short-lived token the user approves in the browser.
 ///
 /// The client gets the registry URL without its credentials.
-#[cfg(any(
-    feature = "composer",
-    feature = "npm",
-    feature = "cargo",
-    feature = "nuget",
-    feature = "generic",
-    feature = "swift",
-    feature = "maven"
-))]
 pub async fn client_with_login(
     global: &GlobalArgs,
     purpose: &sreg_core::login::LoginPurpose,

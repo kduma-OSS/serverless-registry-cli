@@ -27,6 +27,28 @@ pub struct PublishScope {
     pub version: String,
 }
 
+/// A package, or one version of it, a yank or delete login approves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageScope {
+    /// Ecosystem of the package.
+    pub eco: Ecosystem,
+    /// Package name as the registry stores it, e.g. `acme/sdk` or `@acme/sdk`.
+    pub package: String,
+    /// The version; `None` (only for a delete) means the whole package with every version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+impl From<PublishScope> for PackageScope {
+    fn from(scope: PublishScope) -> Self {
+        PackageScope {
+            eco: scope.eco,
+            package: scope.package,
+            version: Some(scope.version),
+        }
+    }
+}
+
 /// What a login asks the user to approve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginPurpose {
@@ -41,6 +63,23 @@ pub enum LoginPurpose {
         /// `MAX_PUBLISH_SCOPES` setting, 20 by default).
         scopes: Vec<PublishScope>,
     },
+    /// An admin token that may yank exactly these versions.
+    Yank {
+        /// The versions to approve; each needs a `version`.
+        scopes: Vec<PackageScope>,
+    },
+    /// An admin token that may delete exactly these versions or whole packages.
+    Delete {
+        /// The versions, or with no `version` the packages, to approve.
+        scopes: Vec<PackageScope>,
+    },
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ScopesBody<'a> {
+    Publish(&'a [PublishScope]),
+    Package(&'a [PackageScope]),
 }
 
 #[derive(Serialize)]
@@ -49,7 +88,7 @@ struct CreateBody<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     eco: Option<Ecosystem>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    scopes: Option<&'a [PublishScope]>,
+    scopes: Option<ScopesBody<'a>>,
 }
 
 impl LoginPurpose {
@@ -63,7 +102,17 @@ impl LoginPurpose {
             LoginPurpose::Publish { scopes } => CreateBody {
                 purpose: "publish",
                 eco: None,
-                scopes: Some(scopes),
+                scopes: Some(ScopesBody::Publish(scopes)),
+            },
+            LoginPurpose::Yank { scopes } => CreateBody {
+                purpose: "yank",
+                eco: None,
+                scopes: Some(ScopesBody::Package(scopes)),
+            },
+            LoginPurpose::Delete { scopes } => CreateBody {
+                purpose: "delete",
+                eco: None,
+                scopes: Some(ScopesBody::Package(scopes)),
             },
         }
     }
@@ -226,6 +275,38 @@ mod tests {
         assert_eq!(
             body,
             serde_json::json!({ "purpose": "pull", "eco": "generic" })
+        );
+    }
+
+    #[test]
+    fn yank_and_delete_list_versions_and_whole_packages() {
+        let yank = LoginPurpose::Yank {
+            scopes: vec![PackageScope {
+                eco: Ecosystem::Npm,
+                package: "@acme/sdk".into(),
+                version: Some("2.3.1".into()),
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(yank.body()).unwrap(),
+            serde_json::json!({
+                "purpose": "yank",
+                "scopes": [{ "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" }]
+            })
+        );
+        let delete = LoginPurpose::Delete {
+            scopes: vec![PackageScope {
+                eco: Ecosystem::Cargo,
+                package: "acme-core".into(),
+                version: None,
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(delete.body()).unwrap(),
+            serde_json::json!({
+                "purpose": "delete",
+                "scopes": [{ "eco": "cargo", "package": "acme-core" }]
+            })
         );
     }
 

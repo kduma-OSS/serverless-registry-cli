@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `sreg yank <eco> <name> <version>` and `sreg delete <eco> <name> (<version> | --all)` are
+  back, for `composer`, `npm`, `cargo`, `nuget`, `generic`, `swift` and `maven`. They
+  authenticate with the token, with GitHub Actions OIDC (`--oidc`, `--oidc-project`; `_`
+  lets the registry find the project, an `admin` credential included) or by signing in
+  through the browser (`--login`).
+- `sreg login --yank`, `--delete` and `--delete-package` ask the registry for a short-lived
+  admin token that may yank or delete exactly the listed versions or packages (needs a
+  registry that supports the `yank` and `delete` login purposes, `docs/api.md` 6.20).
+
 ## [0.2.1] - 2026-10-28
 
 ### Changed

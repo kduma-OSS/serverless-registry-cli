@@ -116,6 +116,12 @@ pub enum Command {
     /// Show the identity and grants of the current token
     Whoami,
 
+    /// Yank a version so it is no longer offered for new installs (admin)
+    Yank(VersionArgs),
+
+    /// Delete a version, or with --all a whole package, from the registry (admin)
+    Delete(DeleteArgs),
+
     /// Write registry credentials for a package manager or print them for export
     Auth(AuthArgs),
 
@@ -163,6 +169,8 @@ impl Command {
                 command: MavenCommand::Publish(_),
             } => "maven publish",
             Command::Whoami => "whoami",
+            Command::Yank(_) => "yank",
+            Command::Delete(_) => "delete",
             Command::Auth(_) => "auth",
             Command::Login(_) => "login",
             Command::Version => "version",
@@ -171,15 +179,6 @@ impl Command {
 }
 
 /// Authentication through GitHub Actions OIDC instead of REGISTRY_TOKEN.
-#[cfg(any(
-    feature = "composer",
-    feature = "npm",
-    feature = "cargo",
-    feature = "nuget",
-    feature = "generic",
-    feature = "swift",
-    feature = "maven"
-))]
 #[derive(Args)]
 pub struct OidcArgs {
     /// Authenticate with a GitHub Actions OIDC token instead of REGISTRY_TOKEN
@@ -539,6 +538,47 @@ pub struct GenericGetArgs {
 }
 
 #[derive(Args)]
+pub struct VersionArgs {
+    /// Ecosystem of the package
+    #[arg(value_enum)]
+    pub eco: PackageEcosystemArg,
+
+    /// Package name
+    pub name: String,
+
+    /// Version
+    pub version: String,
+
+    #[command(flatten)]
+    pub oidc: OidcArgs,
+}
+
+#[derive(Args)]
+pub struct DeleteArgs {
+    /// Ecosystem of the package
+    #[arg(value_enum)]
+    pub eco: PackageEcosystemArg,
+
+    /// Package name
+    pub name: String,
+
+    /// Version to delete
+    #[arg(required_unless_present = "all", conflicts_with = "all")]
+    pub version: Option<String>,
+
+    /// Delete the whole package with every version
+    #[arg(long)]
+    pub all: bool,
+
+    /// Do not ask for confirmation
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+
+    #[command(flatten)]
+    pub oidc: OidcArgs,
+}
+
+#[derive(Args)]
 pub struct AuthArgs {
     /// Package manager to configure
     #[arg(value_enum)]
@@ -577,6 +617,34 @@ pub struct LoginArgs {
     /// without it the token is for downloading
     #[arg(long = "publish", value_name = "ECO:PACKAGE@VERSION")]
     pub publish: Vec<String>,
+
+    /// Ask for an admin token that may yank this package version (repeatable), written
+    /// <ecosystem>:<package>@<version>; cannot be combined with --publish or --delete
+    #[arg(
+        long = "yank",
+        value_name = "ECO:PACKAGE@VERSION",
+        conflicts_with_all = ["publish", "delete", "delete_package"]
+    )]
+    pub yank: Vec<String>,
+
+    /// Ask for an admin token that may delete this package version (repeatable), written
+    /// <ecosystem>:<package>@<version>; cannot be combined with --publish or --yank
+    #[arg(
+        long = "delete",
+        value_name = "ECO:PACKAGE@VERSION",
+        conflicts_with_all = ["publish", "yank"]
+    )]
+    pub delete: Vec<String>,
+
+    /// Ask for an admin token that may delete this whole package with every version
+    /// (repeatable), written <ecosystem>:<package>; cannot be combined with --publish or
+    /// --yank
+    #[arg(
+        long = "delete-package",
+        value_name = "ECO:PACKAGE",
+        conflicts_with_all = ["publish", "yank"]
+    )]
+    pub delete_package: Vec<String>,
 }
 
 /// Ecosystem selector for positional arguments.
@@ -599,6 +667,33 @@ impl From<EcosystemArg> for Ecosystem {
             EcosystemArg::Nuget => Ecosystem::Nuget,
             EcosystemArg::Swift => Ecosystem::Swift,
             EcosystemArg::Maven => Ecosystem::Maven,
+        }
+    }
+}
+
+/// Ecosystem selector for the administrative commands; unlike [`EcosystemArg`] it includes
+/// generic files, which have versions to yank and delete but no package manager to configure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum PackageEcosystemArg {
+    Composer,
+    Npm,
+    Cargo,
+    Nuget,
+    Generic,
+    Swift,
+    Maven,
+}
+
+impl From<PackageEcosystemArg> for Ecosystem {
+    fn from(eco: PackageEcosystemArg) -> Self {
+        match eco {
+            PackageEcosystemArg::Composer => Ecosystem::Composer,
+            PackageEcosystemArg::Npm => Ecosystem::Npm,
+            PackageEcosystemArg::Cargo => Ecosystem::Cargo,
+            PackageEcosystemArg::Nuget => Ecosystem::Nuget,
+            PackageEcosystemArg::Generic => Ecosystem::Generic,
+            PackageEcosystemArg::Swift => Ecosystem::Swift,
+            PackageEcosystemArg::Maven => Ecosystem::Maven,
         }
     }
 }
@@ -965,6 +1060,41 @@ mod tests {
         for eco in ["swift", "maven"] {
             assert!(Cli::try_parse_from(["sreg", "auth", eco, "--write", "x"]).is_ok());
         }
+    }
+
+    #[test]
+    fn yank_parses_positional_arguments() {
+        let cli = Cli::try_parse_from(["sreg", "yank", "npm", "@acme/sdk", "2.3.1"]).unwrap();
+        let Command::Yank(args) = cli.command else {
+            panic!("expected yank");
+        };
+        assert_eq!(Ecosystem::from(args.eco), Ecosystem::Npm);
+        assert_eq!(args.name, "@acme/sdk");
+        assert_eq!(args.version, "2.3.1");
+    }
+
+    #[test]
+    fn delete_requires_a_version_or_all() {
+        assert!(Cli::try_parse_from(["sreg", "delete", "npm", "@acme/sdk"]).is_err());
+        assert!(
+            Cli::try_parse_from(["sreg", "delete", "npm", "@acme/sdk", "1.0.0", "--all"]).is_err()
+        );
+        let cli =
+            Cli::try_parse_from(["sreg", "delete", "npm", "@acme/sdk", "--all", "--yes"]).unwrap();
+        let Command::Delete(args) = cli.command else {
+            panic!("expected delete");
+        };
+        assert!(args.all && args.yes);
+        assert_eq!(args.version, None);
+    }
+
+    #[test]
+    fn administrative_commands_accept_generic_packages() {
+        let cli = Cli::try_parse_from(["sreg", "yank", "generic", "tools", "1.0.0"]).unwrap();
+        let Command::Yank(args) = cli.command else {
+            panic!("expected yank");
+        };
+        assert_eq!(Ecosystem::from(args.eco), Ecosystem::Generic);
     }
 
     #[test]
