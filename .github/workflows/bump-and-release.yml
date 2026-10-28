@@ -37,6 +37,10 @@ jobs:
   release:
     name: Bump and release
     runs-on: ubuntu-latest
+    env:
+      # The release GitHub App (docs/releasing.md "Repository settings"); the ID may be a variable or a secret.
+      RELEASE_APP_ID: ${{ vars.SERVERLESS_REGISTRY_RELEASE_APP_ID || secrets.SERVERLESS_REGISTRY_RELEASE_APP_ID }}
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.SERVERLESS_REGISTRY_RELEASE_APP_PRIVATE_KEY }}
     steps:
       - name: Refuse branches other than main
         if: github.ref != 'refs/heads/main'
@@ -46,6 +50,17 @@ jobs:
           echo "::error::Releases are cut from main only, to keep them linear; this run was started from $REF. Run the workflow from main."
           exit 1
 
+      # A ruleset that requires status checks on main cannot be bypassed by GITHUB_TOKEN, so the
+      # release commit and tag are pushed as the release GitHub App, which is on the bypass list.
+      # RELEASE_TOKEN, when set, takes precedence; without either the push uses GITHUB_TOKEN.
+      - name: Create the release app token
+        id: app-token
+        if: env.RELEASE_APP_ID != '' && env.RELEASE_APP_PRIVATE_KEY != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ env.RELEASE_APP_ID }}
+          private-key: ${{ env.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Check out main
         uses: actions/checkout@v4
         with:
@@ -53,7 +68,7 @@ jobs:
           fetch-depth: 0
           # Pushes made with GITHUB_TOKEN do not start other workflows; a tag pushed with a
           # personal access token starts the Release workflow (see docs/releasing.md).
-          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          token: ${{ secrets.RELEASE_TOKEN || steps.app-token.outputs.token || github.token }}
 
       - name: Check how the Release workflow will be started
         id: trigger
