@@ -33,6 +33,10 @@ pub fn hint_for(err: &anyhow::Error) -> Option<String> {
         Some(Error::ClientTooOld { min }) => {
             Some(format!("download sreg {min} or newer from {RELEASES_URL}"))
         }
+        Some(Error::Api { status: 401, .. }) => Some(
+            "the token is not valid or has expired; sign in again with `sreg login` or --login"
+                .into(),
+        ),
         Some(Error::VersionExists) => {
             Some("published versions are immutable; bump the version to publish again".into())
         }
@@ -144,6 +148,22 @@ mod tests {
         assert!(hint.contains("1.2.0"));
         assert!(hint.contains(RELEASES_URL));
         assert_eq!(hint_for(&anyhow::anyhow!("boom")), None);
+    }
+
+    #[test]
+    fn an_unauthorized_answer_points_to_signing_in_again() {
+        let err = anyhow::Error::new(Error::Api {
+            status: 401,
+            code: "unauthorized".into(),
+            message: "Authentication required.".into(),
+        });
+        assert!(hint_for(&err).unwrap().contains("sreg login"));
+        let other = anyhow::Error::new(Error::Api {
+            status: 403,
+            code: "forbidden".into(),
+            message: "no".into(),
+        });
+        assert_eq!(hint_for(&other), None);
     }
 
     #[test]
