@@ -17,9 +17,44 @@ The registry itself lives in the
 [`serverless-registry-worker`](https://github.com/kduma-OSS/serverless-registry-worker)
 repository.
 
-> **Work in progress.** The HTTP client, the publish flow, `composer`, `npm`, `cargo`,
-> `nuget`, `swift` and `maven publish`, `whoami`, `auth`, `version` and the generic
-> commands work.
+## Install
+
+Release binaries for macOS (arm64, x86_64), Linux (x86_64 glibc and musl, arm64) and
+Windows (x86_64) are published on the
+[releases page](https://github.com/kduma-OSS/serverless-registry-cli/releases).
+
+With the installer of the latest release (installs `sreg` into `~/.cargo/bin`):
+
+```
+# macOS and Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.sh | sh
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.ps1 | iex"
+```
+
+From source, with Rust 1.85 or newer:
+
+```
+cargo install --git https://github.com/kduma-OSS/serverless-registry-cli --tag v0.1.0 --locked sreg-cli
+```
+
+Or download the archive for your platform by hand and verify it against the `.sha256`
+file published next to it:
+
+```
+version=v0.1.0
+target=x86_64-unknown-linux-musl   # see the release for the other targets
+base=https://github.com/kduma-OSS/serverless-registry-cli/releases/download/$version
+curl -LO "$base/sreg-cli-$target.tar.xz" -LO "$base/sreg-cli-$target.tar.xz.sha256"
+sha256sum -c "sreg-cli-$target.tar.xz.sha256"   # macOS: shasum -a 256 -c …
+tar -xJf "sreg-cli-$target.tar.xz"
+install "sreg-cli-$target/sreg" ~/.local/bin/
+```
+
+On Windows, the archive is `sreg-cli-x86_64-pc-windows-msvc.zip`; compare
+`CertUtil -hashfile sreg-cli-x86_64-pc-windows-msvc.zip SHA256` with the `.sha256` file.
+In GitHub Actions, use the [publish action](#github-action), which does all of this.
 
 ## Commands
 
@@ -161,7 +196,7 @@ jobs:
       id-token: write   # only for --oidc
     steps:
       - uses: actions/checkout@v4
-      # sreg must be on PATH, e.g. installed from the GitHub releases
+      - run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.sh | sh
       - run: sreg composer publish --oidc --oidc-project acme-sdk
         env:
           REGISTRY_URL: https://packages.example.com
@@ -259,7 +294,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      # sreg must be on PATH, e.g. installed from the GitHub releases
+      - run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.sh | sh
       - run: sreg swift publish --scope acme --oidc --skip-existing
         env:
           REGISTRY_URL: https://packages.example.com
@@ -352,7 +387,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - run: mvn -B deploy -DskipTests -DaltDeploymentRepository=local::file:./out
-      # sreg must be on PATH, e.g. installed from the GitHub releases
+      - run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.sh | sh
       - run: sreg maven publish --from-dir out --coords com.acme:sdk --skip-existing
         env:
           REGISTRY_URL: https://packages.example.com
@@ -376,8 +411,29 @@ jobs:
           REGISTRY_URL: https://packages.example.com
 ```
 
+## GitHub Action
+
+The composite action in [`action/`](action/README.md) installs the `sreg` release it was
+published with, verifies its checksum and publishes the package of the repository:
+
+```yaml
+- uses: kduma-OSS/serverless-registry-cli/action@v1
+  with:
+    ecosystem: composer
+    registry: https://packages.example.com
+    token: ${{ secrets.REGISTRY_PUBLISH_TOKEN }}
+```
+
+Without `token`, it authenticates with the job's OIDC token (the job needs
+`permissions: id-token: write`). The action takes the ecosystem's options as inputs
+(`version`, `tag-prefix`, `path`, `workspace`, `package`, `project`, `from-dir`,
+`coords`, `scope`, `args`, …), skips already published versions by default and sets the
+outputs `name`, `version`, `url` and `skipped`. See [`action/README.md`](action/README.md)
+for every input and examples for each ecosystem and for monorepos.
+
 ## Publishing from GitHub Actions
 
+Without the [action](#github-action), install `sreg` in the job and call it directly.
 Publish on tag pushes; with `--oidc` no long-lived secret is needed (the job needs
 `id-token: write`):
 
@@ -397,7 +453,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # sreg must be on PATH, e.g. installed from the GitHub releases
+      - run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kduma-OSS/serverless-registry-cli/releases/latest/download/sreg-cli-installer.sh | sh
       - run: sreg npm publish --oidc --oidc-project acme-sdk --skip-existing
         env:
           REGISTRY_URL: https://packages.example.com
@@ -467,6 +523,18 @@ In CI, pass both as environment variables from repository secrets.
 | `1` | Generic error (including invalid usage). |
 | `2` | Already published: the version exists (`409 version_exists`), or a file being appended exists (`409 file_exists`). With `--skip-existing` this is `0`. |
 | `3` | This client is too old for the registry (`426`); the message names the minimum version and links to the releases. |
+
+## Compatibility
+
+`sreg` and the registry are released independently. `sreg` sends its version in
+`X-Client-Version`; the registry answers with the oldest version it accepts in
+`X-Min-Client-Version` and rejects older clients with `426`, which `sreg` reports with
+the minimum version and a link to the releases (exit code `3`).
+`sreg version --registry <url>` shows the registry's version and its minimum client
+version. The registry keeps its API (`/api/v1`) for at least one minor release after a
+change, and raises the minimum only after a `sreg` release that satisfies it is
+available, so updating `sreg` (or the action) is enough. See
+[`docs/releasing.md`](docs/releasing.md).
 
 ## Building a smaller binary
 
