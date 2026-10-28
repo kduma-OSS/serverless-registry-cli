@@ -33,8 +33,8 @@ serde_json = "1.0.154"
 toml = "1.1.8"
 
 # HTTP
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json"] }
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "stream"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "fs", "time"] }
 url = "2.5.8"
 
 # Errors
@@ -57,7 +57,8 @@ flate2 = "1.1.10"
 
 # Testing
 tempfile = "3.27.0"
-wiremock = "0.6.5"
+# 0.6.5 needs Rust 1.88 (let chains); keep the MSRV check green.
+wiremock = "=0.6.4"
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
 
