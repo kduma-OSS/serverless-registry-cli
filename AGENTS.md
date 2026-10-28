@@ -38,11 +38,17 @@ crates/
   eco-maven/     # Maven artifacts from a local file repository, effective POM parsing
   cli/           # clap command tree, text and `--json` output, exit codes; one Cargo
                  # feature per ecosystem (all enabled by default)
-action/          # composite GitHub Action wrapping the published binaries
+scripts/         # bump-version.mjs (release version and changelog) and its tests
 dist-workspace.toml  # cargo-dist release configuration
 docs/            # specification, API contract, release process, `sreg auth` design
-.github/workflows/   # CI (fmt, clippy, tests, feature matrix, MSRV, action) and releases
+.github/workflows/   # CI (fmt, clippy, tests, feature matrix, MSRV, release scripts),
+                     # Bump and release, the generated cargo-dist Release workflow and
+                     # its post-announce job release-action.yml
 ```
+
+The composite GitHub Action is not part of this repository: it lives in
+[`kduma-OSS/serverless-registry-publish-action`](https://github.com/kduma-OSS/serverless-registry-publish-action)
+and is released there (see `docs/releasing.md`).
 
 Design rules that must hold:
 
@@ -87,7 +93,7 @@ feature gating or uses newer language features.
   `test`, `chore`, `build`, `ci`, `perf`, `revert`. Use the lower-case imperative mood and
   keep the subject under 72 characters.
 - Scopes used here: `core`, `cli`, `composer`, `npm`, `cargo`, `nuget`, `generic`, `swift`,
-  `maven`, `action`, `dist`, `deps`, `ci`, `docs`.
+  `maven`, `dist`, `deps`, `ci`, `docs`.
 - Make small, focused commits. One logical change per commit; a feature plus its tests is
   one commit, two unrelated features are two commits.
 - **Never** add `Co-Authored-By` or `Claude-Session` trailers, or any other trailer. The
