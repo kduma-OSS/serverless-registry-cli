@@ -203,3 +203,132 @@ async fn writes_nuget_config() {
         TOKEN.split_once(':').unwrap().1
     )));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prints_the_swift_registry_login_command() {
+    let server = MockServer::start().await;
+
+    sreg(&server, &["auth", "swift"])
+        .await
+        .success()
+        .stdout(format!(
+            "swift package-registry login '{}/swift' --username 'root' --password '{}'\n",
+            server.uri(),
+            TOKEN.split_once(':').unwrap().1
+        ));
+
+    let assert = sreg(&server, &["auth", "swift", "--json"]).await.success();
+    let report = stdout_json(&assert);
+    assert_eq!(report["eco"], "swift");
+    assert_eq!(report["registry"], format!("{}/swift", server.uri()));
+    assert_eq!(report["username"], "root");
+    assert_eq!(report["password"], TOKEN.split_once(':').unwrap().1);
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writes_a_netrc_entry_for_swift() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let netrc = dir.path().join(".netrc");
+    std::fs::write(
+        &netrc,
+        "machine github.com login x password y\nmachine 127.0.0.1 login old password old\n",
+    )
+    .unwrap();
+
+    let assert = sreg(
+        &server,
+        &[
+            "auth",
+            "swift",
+            "--write",
+            netrc.to_str().unwrap(),
+            "--json",
+        ],
+    )
+    .await
+    .success();
+
+    assert_eq!(stdout_json(&assert)["key"], "machine 127.0.0.1");
+    assert_eq!(
+        std::fs::read_to_string(&netrc).unwrap(),
+        format!(
+            "machine github.com login x password y\nmachine 127.0.0.1 login root password {}\n",
+            TOKEN.split_once(':').unwrap().1
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prints_maven_and_gradle_snippets() {
+    let server = MockServer::start().await;
+    let password = TOKEN.split_once(':').unwrap().1;
+
+    sreg(&server, &["auth", "maven"])
+        .await
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "<server>\n  <id>sreg</id>\n  <username>root</username>\n  \
+             <password>{password}</password>\n</server>"
+        )))
+        .stdout(predicate::str::contains(format!(
+            "credentials {{\n    username = \"root\"\n    password = \"{password}\"\n}}"
+        )));
+
+    let assert = sreg(
+        &server,
+        &["auth", "maven", "--registry-name", "acme", "--json"],
+    )
+    .await
+    .success();
+    let report = stdout_json(&assert);
+    assert_eq!(report["eco"], "maven");
+    assert_eq!(report["id"], "acme");
+    assert_eq!(report["username"], "root");
+    assert_eq!(report["password"], password);
+    assert!(report["settingsXml"]
+        .as_str()
+        .unwrap()
+        .contains("<id>acme</id>"));
+    assert!(report["gradle"]
+        .as_str()
+        .unwrap()
+        .starts_with("credentials {"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn merges_the_server_into_maven_settings() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("settings.xml");
+    std::fs::write(
+        &settings,
+        "<settings>\n  <servers>\n    <server>\n      <id>github</id>\n    </server>\n  </servers>\n</settings>\n",
+    )
+    .unwrap();
+
+    let assert = sreg(
+        &server,
+        &[
+            "auth",
+            "maven",
+            "--write",
+            settings.to_str().unwrap(),
+            "--json",
+        ],
+    )
+    .await
+    .success();
+
+    assert_eq!(stdout_json(&assert)["key"], "servers.server.sreg");
+    assert_eq!(
+        std::fs::read_to_string(&settings).unwrap(),
+        format!(
+            "<settings>\n  <servers>\n    <server>\n      <id>github</id>\n    </server>\n    \
+             <server>\n      <id>sreg</id>\n      <username>root</username>\n      \
+             <password>{}</password>\n    </server>\n  </servers>\n</settings>\n",
+            TOKEN.split_once(':').unwrap().1
+        )
+    );
+}

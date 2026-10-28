@@ -1,16 +1,17 @@
 # `sreg auth`: credentials for package managers
 
-`sreg auth <eco>` hands the registry token to Composer, npm, cargo or NuGet. It either
-writes the token into the package manager's credentials file (`--write <file>`) or prints
-one line that puts it into the environment (for NuGet: a `dotnet nuget add source`
-command).
+`sreg auth <eco>` hands the registry token to Composer, npm, cargo, NuGet, the Swift
+Package Manager or Maven/Gradle. It either writes the token into the package manager's
+credentials file (`--write <file>`) or prints what puts it in place: one line for the
+environment, a `dotnet nuget add source` command (NuGet), a `swift package-registry login`
+command (Swift), or `settings.xml` and Gradle snippets (Maven).
 
 Generic packages have no package manager: `sreg generic get` uses `--token` /
 `REGISTRY_TOKEN` (or `--oidc [--oidc-project <PROJECT>]`) directly. The publish commands take
 the same `--oidc [--oidc-project <PROJECT>]` pair; only `sreg auth` calls it `--project`.
 
 ```text
-sreg auth <composer|npm|cargo|nuget> [--oidc [--project <PROJECT>]] [--write <FILE>]
+sreg auth <composer|npm|cargo|nuget|swift|maven> [--oidc [--project <PROJECT>]] [--write <FILE>]
           [--registry-name <NAME>] [--registry <URL>] [--token <TOKEN>] [--json]
 ```
 
@@ -33,7 +34,7 @@ determine where the token is stored. No request is made to the registry itself.
 GitHub OIDC tokens are short-lived (minutes), so run `sreg auth --oidc` right before the
 step that installs packages.
 
-## Without `--write`: environment line
+## Without `--write`: environment line or command
 
 | Ecosystem  | Printed line                                                                                                                 |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -41,6 +42,8 @@ step that installs packages.
 | `npm`      | `npm_config_//<host><path>/npm/:_authToken=<token>`                                                                          |
 | `cargo`    | `export CARGO_REGISTRIES_<NAME>_TOKEN='<token>'`                                                                             |
 | `nuget`    | `dotnet nuget add source '<registry>/nuget/index.json' -n '<name>' -u '<login>' -p '<password>' --store-password-in-clear-text` |
+| `swift`    | `swift package-registry login '<registry>/swift' --username '<login>' --password '<password>'`                                 |
+| `maven`    | a `settings.xml` `<server>` snippet and a Gradle `credentials` snippet, see below                                            |
 
 - `<host>` is the registry's host name, followed by `:<port>` when the URL has an explicit
   non-default port.
@@ -61,11 +64,43 @@ step that installs packages.
 - The NuGet command is printed with every argument in single quotes; run it with
   `eval "$(sreg auth nuget)"`. `dotnet` stores the password in clear text in the user's
   `NuGet.Config` (encrypted storage is only available on Windows).
+- The Swift command is printed the same way; run it with `eval "$(sreg auth swift)"`.
+  SwiftPM stores the credentials in the keychain on macOS and in `~/.netrc` elsewhere. In
+  CI, writing `~/.netrc` directly (`sreg auth swift --write ~/.netrc`) avoids any prompt.
+  The registry itself is configured with
+  `swift package-registry set '<registry>/swift' --scope <scope>`, which `sreg` does not run.
+- For Maven, two snippets are printed, each preceded by a comment line naming where it
+  goes:
+
+  ```xml
+  <!-- ~/.m2/settings.xml, inside <servers> -->
+  <server>
+    <id><name></id>
+    <username><login></username>
+    <password><password></password>
+  </server>
+  ```
+
+  ```kotlin
+  // Gradle, inside the maven { } repository of the registry
+  credentials {
+      username = "<login>"
+      password = "<password>"
+  }
+  ```
+
+  `<name>` is `--registry-name` (default `sreg`); the `<repository>` of the POM (or the
+  `<mirror>`) that points at the registry must use the same `<id>`. The Gradle block is
+  valid in the Kotlin and the Groovy DSL; `"`, `\` and `$` in the values are escaped.
 
 With `--json` the output is `{ "eco": "<eco>", "name": "<variable>", "value": "<value>" }`,
 for example to set the variable from a GitHub Actions step without shell quoting. For
 `nuget` it is `{ "eco": "nuget", "source": "<url>", "name": "<name>", "username":
-"<login>", "password": "<password>", "command": "<printed command>" }`.
+"<login>", "password": "<password>", "command": "<printed command>" }`, for `swift` it is
+`{ "eco": "swift", "registry": "<registry>/swift", "username": "<login>", "password":
+"<password>", "command": "<printed command>" }`, and for `maven` it is `{ "eco": "maven",
+"id": "<name>", "username": "<login>", "password": "<password>", "settingsXml": "<server
+snippet>", "gradle": "<credentials snippet>" }`.
 
 The printed line contains the token; treat the output as a secret.
 
@@ -80,6 +115,8 @@ directories are created; a new file gets mode `0600` on Unix). Other content is 
 | `npm`      | `.npmrc`                         | `//<host><path>/npm/:_authToken=<token>`         |
 | `cargo`    | `~/.cargo/credentials.toml`      | `[registries.<name>]` with `token = "<token>"`   |
 | `nuget`    | `nuget.config`                   | source `<name>` and its clear-text credentials   |
+| `swift`    | `~/.netrc`                       | `machine <hostname> login <login> password <password>` |
+| `maven`    | `~/.m2/settings.xml`             | `<server>` with `<id><name></id>`, username and password |
 
 - **composer**: the file must contain a JSON object; `bearer` is created when missing and the
   entry for `<host>` is replaced. Key order is kept; the file is written with four-space
@@ -103,10 +140,22 @@ directories are created; a new file gets mode `0600` on Unix). Other content is 
   sources, `<clear />`, comments, formatting) is kept. `<name>` is `--registry-name`
   (default `sreg`) and must start with a letter because it is also an XML element name.
   A new file starts with an XML declaration.
+- **swift**: `<hostname>` is the registry's host name without the port (netrc entries match
+  the host only). The first entry for that machine is replaced, wherever it spans several
+  lines, and further entries for it are removed; without one, the entry is added before a
+  `default` entry (which must stay last) or at the end. Other entries, `macdef` macros,
+  comments and formatting are kept. Values with whitespace are written in double quotes.
+  A new file gets mode `0600`, which netrc readers require.
+- **maven**: the file must have a `<settings>` root. The first `<server>` under `<servers>`
+  whose `<id>` is `<name>` is replaced in place and further ones are removed; without one,
+  the entry is added at the end of `<servers>`, which is created when missing. Everything
+  else (other servers, mirrors, profiles, comments, formatting) is kept. `<name>` is
+  `--registry-name` (default `sreg`). A new file starts with an XML declaration and the
+  `http://maven.apache.org/SETTINGS/1.0.0` namespace.
 
 With `--json` the output is `{ "eco": "<eco>", "file": "<path>", "key": "<entry>" }`; the
-token is not printed. `key` is `bearer.<host>`, the npm key, `registries.<name>.token` or
-`packageSourceCredentials.<name>`. In text mode a confirmation naming the token's login (the project,
+token is not printed. `key` is `bearer.<host>`, the npm key, `registries.<name>.token`,
+`packageSourceCredentials.<name>`, `machine <hostname>` or `servers.server.<name>`. In text mode a confirmation naming the token's login (the project,
 which is not secret) and the file is printed.
 
 ## Examples
@@ -126,6 +175,13 @@ eval "$(sreg auth cargo --registry-name acme)"
 
 # NuGet: add the source to the repository's nuget.config in CI.
 sreg auth nuget --oidc --project shop-frontend --write nuget.config
+
+# Swift: log in to the registry, or write ~/.netrc in CI.
+eval "$(sreg auth swift)"
+sreg auth swift --oidc --write ~/.netrc
+
+# Maven: add the server to the user's settings.xml.
+sreg auth maven --oidc --write ~/.m2/settings.xml
 ```
 
 ## Exit codes

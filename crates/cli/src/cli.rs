@@ -182,8 +182,9 @@ pub struct OidcArgs {
 ))]
 #[derive(Args)]
 pub struct PublishArgs {
-    /// Version to publish (composer: instead of the release tag on HEAD, e.g. v1.2.3 ->
-    /// 1.2.3; npm, cargo and nuget: written into the manifest before packaging)
+    /// Version to publish (composer and swift: instead of the release tag on HEAD, e.g.
+    /// v1.2.3 -> 1.2.3; npm, cargo and nuget: written into the manifest before packaging;
+    /// maven: selects the version directory)
     #[arg(long = "version", id = "package_version", value_name = "VERSION")]
     pub version: Option<String>,
 
@@ -318,8 +319,21 @@ pub struct SwiftPublishArgs {
     #[arg(long, value_name = "DIR", default_value = ".")]
     pub path: PathBuf,
 
+    /// Registry scope to publish under: the package is <SCOPE>.<name in Package.swift>
+    #[arg(long, value_name = "SCOPE")]
+    pub scope: String,
+
+    /// Source repository URL recorded with the version (default: the URL of the
+    /// `origin` git remote, when there is one)
+    #[arg(long, value_name = "URL")]
+    pub repository_url: Option<String>,
+
     #[command(flatten)]
     pub publish: PublishArgs,
+
+    /// Extra arguments passed verbatim to `swift package archive-source`
+    #[arg(last = true, value_name = "SWIFT_ARGS")]
+    pub swift_args: Vec<std::ffi::OsString>,
 }
 
 #[cfg(feature = "maven")]
@@ -332,16 +346,22 @@ pub enum MavenCommand {
 #[cfg(feature = "maven")]
 #[derive(Args)]
 pub struct MavenPublishArgs {
-    /// Directory holding the built artifacts (POM, JARs) to publish
+    /// Local Maven repository the build deployed to (`mvn deploy
+    /// -DaltDeploymentRepository=local::file:./out`, or a Gradle maven-publish
+    /// repository with a file:// URL)
     #[arg(long, value_name = "DIR")]
     pub from_dir: PathBuf,
 
-    /// Coordinates to publish under, `<group>:<artifact>` (default: from the POM)
+    /// Artifact to publish when the repository holds several: <groupId>:<artifactId>
     #[arg(long, value_name = "GROUP:ARTIFACT")]
     pub coords: Option<String>,
 
     #[command(flatten)]
     pub publish: PublishArgs,
+
+    /// Maven publishing runs no external tool; arguments after `--` are rejected
+    #[arg(last = true, hide = true, value_name = "ARGS")]
+    pub passthrough: Vec<std::ffi::OsString>,
 }
 
 #[cfg(feature = "generic")]
@@ -455,12 +475,14 @@ pub struct AuthArgs {
     #[arg(long, value_name = "PROJECT", requires = "oidc")]
     pub project: Option<String>,
 
-    /// Write the credentials to this file (auth.json, .npmrc or credentials.toml)
-    /// instead of printing them; an existing file is updated in place
+    /// Write the credentials to this file (auth.json, .npmrc, credentials.toml,
+    /// nuget.config, .netrc or settings.xml) instead of printing them; an existing file
+    /// is updated in place
     #[arg(long, value_name = "FILE")]
     pub write: Option<PathBuf>,
 
-    /// Name of the registry in cargo's configuration (cargo only)
+    /// Name of the registry in cargo's configuration, of the NuGet source and the id of
+    /// the Maven server (cargo, nuget and maven)
     #[arg(long, value_name = "NAME", default_value = "sreg")]
     pub registry_name: String,
 }
@@ -472,6 +494,8 @@ pub enum EcosystemArg {
     Npm,
     Cargo,
     Nuget,
+    Swift,
+    Maven,
 }
 
 impl From<EcosystemArg> for Ecosystem {
@@ -481,6 +505,8 @@ impl From<EcosystemArg> for Ecosystem {
             EcosystemArg::Npm => Ecosystem::Npm,
             EcosystemArg::Cargo => Ecosystem::Cargo,
             EcosystemArg::Nuget => Ecosystem::Nuget,
+            EcosystemArg::Swift => Ecosystem::Swift,
+            EcosystemArg::Maven => Ecosystem::Maven,
         }
     }
 }
@@ -780,11 +806,46 @@ mod tests {
             "publish",
             "--path",
             "pkg",
+            "--scope",
+            "acme",
             "--version",
             "1.0.0",
+            "--",
+            "--verbose",
         ])
         .unwrap();
         assert_eq!(cli.command.name(), "swift publish");
+        let Command::Swift {
+            command: SwiftCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected swift publish");
+        };
+        assert_eq!(args.scope, "acme");
+        assert_eq!(args.repository_url, None);
+        assert_eq!(args.swift_args, ["--verbose"]);
+        // The scope is not in Package.swift, so it is required.
+        assert!(Cli::try_parse_from(["sreg", "swift", "publish", "--version", "1.0.0"]).is_err());
+        let cli = Cli::try_parse_from([
+            "sreg",
+            "swift",
+            "publish",
+            "--scope",
+            "acme",
+            "--repository-url",
+            "https://github.com/acme/kit",
+        ])
+        .unwrap();
+        let Command::Swift {
+            command: SwiftCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected swift publish");
+        };
+        assert_eq!(
+            args.repository_url.as_deref(),
+            Some("https://github.com/acme/kit")
+        );
 
         let cli = Cli::try_parse_from([
             "sreg",
@@ -807,7 +868,11 @@ mod tests {
         assert_eq!(args.from_dir, PathBuf::from("target/repo"));
         assert_eq!(args.coords.as_deref(), Some("com.acme:sdk"));
         assert_eq!(args.publish.tag_prefix.as_deref(), Some("sdk/v"));
+        assert!(args.passthrough.is_empty());
         assert!(Cli::try_parse_from(["sreg", "maven", "publish"]).is_err());
+        for eco in ["swift", "maven"] {
+            assert!(Cli::try_parse_from(["sreg", "auth", eco, "--write", "x"]).is_ok());
+        }
     }
 
     #[test]

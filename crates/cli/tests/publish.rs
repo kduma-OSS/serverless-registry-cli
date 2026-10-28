@@ -30,8 +30,10 @@ async fn packaging_failures_stop_before_contacting_the_registry() {
     ];
     for eco in ecosystems {
         let mut args = vec![eco, "publish", "--version", "1.0.0", "--dry-run"];
-        if eco == "maven" {
-            args.extend(["--from-dir", "."]);
+        match eco {
+            "maven" => args.extend(["--from-dir", "."]),
+            "swift" => args.extend(["--scope", "acme"]),
+            _ => {}
         }
         sreg_in(&server, empty.path(), &args)
             .await

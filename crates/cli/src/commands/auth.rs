@@ -1,8 +1,9 @@
-//! `sreg auth <eco>`: credentials for Composer, npm, cargo and NuGet.
+//! `sreg auth <eco>`: credentials for Composer, npm, cargo, NuGet, Swift and Maven.
 //!
 //! With `--write <file>` the token is merged into the package manager's credentials
-//! file; without it a line for the environment (or, for NuGet, a `dotnet nuget add
-//! source` command) is printed. See `docs/cli-auth.md`.
+//! file; without it a line for the environment (for NuGet a `dotnet nuget add source`
+//! command, for Swift a `swift package-registry login` command, for Maven the
+//! `settings.xml` and Gradle snippets) is printed. See `docs/cli-auth.md`.
 
 use std::path::Path;
 
@@ -13,6 +14,8 @@ use sreg_core::Ecosystem;
 use url::Url;
 
 use crate::cli::{AuthArgs, GlobalArgs};
+use crate::commands::maven_settings::{self, MavenServer};
+use crate::commands::netrc;
 use crate::commands::nuget_config::{self, NugetSource};
 use crate::context;
 use crate::output::Output;
@@ -32,6 +35,26 @@ struct NugetCommand {
     username: String,
     password: String,
     command: String,
+}
+
+#[derive(Serialize)]
+struct SwiftCommand {
+    eco: Ecosystem,
+    registry: String,
+    username: String,
+    password: String,
+    command: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MavenSnippets {
+    eco: Ecosystem,
+    id: String,
+    username: String,
+    password: String,
+    settings_xml: String,
+    gradle: String,
 }
 
 #[derive(Serialize)]
@@ -96,6 +119,45 @@ pub async fn run(global: &GlobalArgs, out: &Output, args: &AuthArgs) -> anyhow::
                 };
                 out.emit(&report, || println!("{}", report.command))
             }
+            Target::Swift { registry, .. } => {
+                let password = Token::password(&token)?;
+                let command = format!(
+                    "swift package-registry login {} --username {} --password {}",
+                    shell_quote(registry),
+                    shell_quote(&login),
+                    shell_quote(password)
+                );
+                let report = SwiftCommand {
+                    eco,
+                    registry: registry.clone(),
+                    username: login,
+                    password: password.to_owned(),
+                    command,
+                };
+                out.emit(&report, || println!("{}", report.command))
+            }
+            Target::Maven { id } => {
+                let server = MavenServer {
+                    id,
+                    username: &login,
+                    password: Token::password(&token)?,
+                };
+                let report = MavenSnippets {
+                    eco,
+                    id: id.clone(),
+                    username: login.clone(),
+                    password: server.password.to_owned(),
+                    settings_xml: maven_settings::server_snippet(&server)?,
+                    gradle: maven_settings::gradle_snippet(&server),
+                };
+                out.emit(&report, || {
+                    println!("<!-- ~/.m2/settings.xml, inside <servers> -->");
+                    println!("{}", report.settings_xml);
+                    println!();
+                    println!("// Gradle, inside the maven {{ }} repository of the registry");
+                    println!("{}", report.gradle);
+                })
+            }
             _ => {
                 let (name, value) = target.variable(&token)?;
                 let line = target.shell_line(&name, &value);
@@ -117,6 +179,10 @@ enum Target {
     Cargo { name: String },
     /// `nuget.config` source `<name>` for `<registry>/nuget/index.json`.
     Nuget { name: String, source: String },
+    /// `.netrc` entry for the host of the registry `<registry>/swift`.
+    Swift { registry: String, host: String },
+    /// `settings.xml` `<server>` with the id `<name>`.
+    Maven { id: String },
 }
 
 impl Target {
@@ -149,9 +215,17 @@ impl Target {
                     "generic packages have no package manager; pass --token to `sreg generic get`"
                 )
             }
-            Ecosystem::Swift | Ecosystem::Maven => {
-                bail!("`sreg auth` does not support {eco} yet")
-            }
+            Ecosystem::Swift => Target::Swift {
+                registry: format!("{}/swift", sreg_core::token::audience(registry)),
+                // netrc entries name the host only; the port is not part of the match.
+                host: registry
+                    .host_str()
+                    .context("the registry URL has no host")?
+                    .to_owned(),
+            },
+            Ecosystem::Maven => Target::Maven {
+                id: validate_registry_name(registry_name, false)?,
+            },
         })
     }
 
@@ -162,6 +236,8 @@ impl Target {
             Target::Npm { key } => key.clone(),
             Target::Cargo { name } => format!("registries.{name}.token"),
             Target::Nuget { name, .. } => format!("packageSourceCredentials.{name}"),
+            Target::Swift { host, .. } => format!("machine {host}"),
+            Target::Maven { id } => format!("servers.server.{id}"),
         }
     }
 
@@ -180,7 +256,9 @@ impl Target {
                 ),
                 token.to_owned(),
             ),
-            Target::Nuget { .. } => bail!("NuGet credentials are not passed through a variable"),
+            Target::Nuget { .. } | Target::Swift { .. } | Target::Maven { .. } => {
+                bail!("these credentials are not passed through a variable")
+            }
         })
     }
 
@@ -206,6 +284,20 @@ impl Target {
                 &NugetSource {
                     name,
                     url: source,
+                    username: Token::login(token)?,
+                    password: Token::password(token)?,
+                },
+            ),
+            Target::Swift { host, .. } => Ok(netrc::merge(
+                existing,
+                host,
+                Token::login(token)?,
+                Token::password(token)?,
+            )),
+            Target::Maven { id } => maven_settings::merge(
+                existing,
+                &MavenServer {
+                    id,
                     username: Token::login(token)?,
                     password: Token::password(token)?,
                 },
@@ -432,6 +524,27 @@ mod tests {
         );
         assert!(Target::new(Ecosystem::Nuget, &url, "1acme").is_err());
         assert!(Target::new(Ecosystem::Cargo, &url, "1acme").is_ok());
+    }
+
+    #[test]
+    fn swift_and_maven_targets() {
+        assert_eq!(
+            target(Ecosystem::Swift, "http://localhost:8787/registry/"),
+            Target::Swift {
+                registry: "http://localhost:8787/registry/swift".into(),
+                host: "localhost".into()
+            }
+        );
+        assert_eq!(
+            target(Ecosystem::Swift, "https://packages.example.com").key(),
+            "machine packages.example.com"
+        );
+        let maven = target(Ecosystem::Maven, "https://packages.example.com");
+        assert_eq!(maven, Target::Maven { id: "sreg".into() });
+        assert_eq!(maven.key(), "servers.server.sreg");
+        assert!(maven.variable(TOKEN).is_err());
+        let url = Url::parse("https://packages.example.com").unwrap();
+        assert!(Target::new(Ecosystem::Maven, &url, "my repo").is_err());
     }
 
     #[test]

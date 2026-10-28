@@ -3,6 +3,8 @@
 mod auth;
 #[cfg(feature = "generic")]
 mod generic;
+mod maven_settings;
+mod netrc;
 mod nuget_config;
 #[cfg(any(
     feature = "composer",
@@ -95,7 +97,9 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Swift {
             command: SwiftCommand::Publish(args),
         } => {
-            let packager = sreg_eco_swift::SwiftPackager::new();
+            let packager = sreg_eco_swift::SwiftPackager::new()
+                .scope(Some(args.scope.clone()))
+                .repository_url(args.repository_url.clone());
             publish::run_packager(
                 global,
                 &out,
@@ -103,7 +107,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 &args.publish,
                 &args.path,
                 None,
-                &[],
+                &args.swift_args,
             )
             .await
         }
@@ -119,7 +123,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 &args.publish,
                 &args.from_dir,
                 None,
-                &[],
+                &args.passthrough,
             )
             .await
         }
