@@ -278,6 +278,7 @@ async fn login_conflicts_with_oidc() {
         .stderr(predicate::str::contains("cannot be used with"));
 }
 
+#[cfg(feature = "generic")]
 #[tokio::test(flavor = "multi_thread")]
 async fn generic_get_login_downloads_with_the_issued_token() {
     let server = login_server("read").await;
@@ -311,6 +312,7 @@ async fn generic_get_login_downloads_with_the_issued_token() {
     );
 }
 
+#[cfg(feature = "generic")]
 #[tokio::test(flavor = "multi_thread")]
 async fn generic_publish_login_asks_for_exactly_the_published_version() {
     let server = login_server("publish").await;
