@@ -198,8 +198,8 @@ do not need that header. The CLI never uses cookies.
 
 ### 2.4 Credential roles
 
-A credential has one or more roles: `read`, `publish` or both, or `admin` alone. Each role
-has its own list of grants. Every secret (an auth entry) has a `scope`, the roles it may use,
+A credential has one or more roles: any non-empty combination of `read`, `publish` and
+`admin`. `read` and `publish` each have their own list of grants; `admin` has none of its own. Every secret (an auth entry) has a `scope`, the roles it may use,
 a non-empty subset of the credential's roles. A request uses the roles of the credential
 within the scope of the secret that authenticated it:
 
@@ -209,10 +209,16 @@ within the scope of the secret that authenticated it:
 | `publish` | `whoami`, `publish/init`, `publish/commit` (within its `publish` grants)                     |
 | `admin`   | `whoami`, package listing and generic feed (unfiltered), package administration, credentials |
 
+A login token approved for a yank or delete (2.6) carries the `admin` role but only the
+operations it names: it may call `whoami` and those yank and delete routes and nothing else
+(the table above does not apply to it).
+
 Any role may hold `key` and `gh` entries; a `publish` credential usually has `gh` entries and
-may also have `key` entries (for publishing from outside GitHub Actions). Credentials with the
-`read` or `publish` role may also hold `login` entries for people (2.6), and so may `admin`
-credentials (for the panel; they never issue login tokens). A secret never gains a role: adding
+may also have `key` entries (for publishing from outside GitHub Actions). Any credential may also
+hold `login` entries for people (2.6). A credential that holds `admin` together with `read` or
+`publish` is one identity whose secrets are told apart by their `scope`: a `key` scoped to
+`read` reads with the `read` grants and cannot call the administrative API, while a `login`
+scoped to `admin` signs in to the panel. A secret never gains a role: adding
 a role to a credential leaves its existing secrets with the roles they had, so a `key`
 committed to a consumer's repository cannot start publishing. When a credential holds both
 roles, a new secret must say which it may use (`scope`, 6.17); a `login` is limited the same
@@ -265,9 +271,13 @@ With the reserved login, `_:gh.<jwt>`, the Worker resolves the project from the 
    JSON array of project names; the union is the list of candidates.
 3. Load every candidate's record and keep the ones with a matching active `gh` entry.
 4. Keep only the credentials that hold the role the request needs, through a matching entry
-   whose `scope` includes it: `publish` for `/api/v1/publish/*`, `read` for every other
-   authenticated route (including the generic and NuGet feeds and a panel login). An `admin`
-   credential is never resolved through `_`.
+   whose `scope` includes it: `publish` for `/api/v1/publish/*`, `admin` for the routes that
+   need the `admin` role alone (yank, delete and reindex of packages, credentials and their
+   secrets, the GitHub repository lookup and bucket accept), `read` for every other
+   authenticated route (including `whoami`, the package listing, the generic and NuGet feeds
+   and a panel login). So `sreg yank --oidc` and `sreg delete --oidc` need no `--project`
+   when exactly one `admin` credential has a matching `gh` entry; `<project>:gh.<jwt>` works
+   for an `admin`-scoped `gh` entry on the same routes.
 5. Exactly one left → that is the identity. None → `401 unauthorized`. More than one →
    `401 unauthorized` with the message
    "more than one project matches this token; use <project>:gh.<jwt>".
@@ -290,14 +300,17 @@ token** (`type` `st`, 2.1) for the credential the entry belongs to. The token ca
 role and the grants of that role: a pull login issues a `read` token and a publish login a
 `publish` token, and the credential must hold that role with the `login`'s `scope` including it
 (a credential with both roles can issue both kinds; a `login` scoped to `read` only issues pull
-tokens). An `admin` login signs in to the panel but never issues a token (the approval page
-does not accept it).
+tokens). A yank or delete login issues an `admin` token limited to the operations it names (a
+credential with the `admin` role and a `login` whose scope includes `admin`). A `login` whose
+scope has no `read` or `publish` (an `admin` only login) signs in to the panel and approves
+yank and delete logins; it never issues a pull, a publish or a general administration token
+(the approval page of those does not accept it).
 
 The flow (the CLI does it for `sreg login`, `sreg auth <ecosystem> --login`, `sreg generic get
---login` and `sreg <ecosystem> publish --login`):
+--login`, `sreg <ecosystem> publish --login`, `sreg yank --login` and `sreg delete --login`):
 
-1. The client calls `POST /api/v1/auth/sessions` (6.20) with what it needs: a pull, or a
-   publish of named package versions. It receives a signed session id, the page to open and a
+1. The client calls `POST /api/v1/auth/sessions` (6.20) with what it needs: a pull, a
+   publish of named package versions, or a yank or delete of named versions or packages. It receives a signed session id, the page to open and a
    poll token. **Nothing is stored**, so anonymous callers cannot use up KV writes.
 2. The person opens `<PUBLIC_URL>/authorize/<session>`. The page shows the request. Without a
    login session the person signs in in up to two steps. **Step 1** is the project name and the
@@ -319,22 +332,40 @@ exp }`, valid 5 minutes, `HttpOnly; Secure; SameSite=Lax`, limited to the path o
    allowed and offers no approval. The same checks run again on the approval request. When
    the entry has a one-time code, a publish also needs one verified within the last 15
    minutes in this browser session; if not, the page asks for a new one first. A **pull** has
-   a checkbox "extended validity".
+   a checkbox "extended validity". A **yank** or **delete** is shown with every package
+   version (a delete may be a whole package, shown as such, with a warning that deleting
+   cannot be undone) and is approved only when the credential has the `admin` role (within the
+   login's scope); there are no grants to check. It needs the same fresh one-time code as a
+   publish. The sign-in on this page accepts an `admin`-only login only for a yank or delete.
 4. On approval the Worker issues the token and stores it at `login-session:<nonce>` for the
    rest of the session's life (at most 10 minutes). The client polls `POST
 /api/v1/auth/sessions/poll` (6.21) until it receives the token, which is then deleted.
 
 A pull token lasts 1 hour, or `LOGIN_TOKEN_EXTENDED_TTL_HOURS` (default 24) when extended
-validity was ticked; a publish token lasts 15 minutes. A publish token carries `scopes`, the
+validity was ticked; a publish token and an admin token (yank, delete) last 15 minutes. A publish token carries `scopes`, the
 approved `{ eco, package, version }` list (at most `MAX_PUBLISH_SCOPES`, default 20): `publish/init` and `publish/commit`
 answer `403 forbidden` for anything else, and `whoami` (6.3) returns the scopes.
 
+An admin token carries `ops`, the approved operations, `{ "op": "yank" | "delete", "eco",
+"package", "version"? }` (at most `MAX_PUBLISH_SCOPES`); `version` is absent for the deletion
+of a whole package. It carries the `admin` role and may call only:
+`POST /api/v1/packages/<eco>/<name>/<version>/yank` for a version in a `yank` operation,
+`DELETE /api/v1/packages/<eco>/<name>/<version>` for a version in a `delete` operation,
+`DELETE /api/v1/packages/<eco>/<name>` for a `delete` operation without `version`, and `GET
+/api/v1/whoami`. Names and versions are compared in their stored form (1.3). An operation
+that was not approved is `403 forbidden` ("This login token was not approved for this
+operation."), every other route is `403 forbidden` ("This login token may not perform this
+operation."): the package listing, `reindex`, credentials, secrets, the GitHub lookup, bucket
+accept and publishing, and so are the native protocol routes and the panel login. A delete of
+a whole package does not approve deleting one of its versions, nor the other way round.
+
 The token is `<project>:st.<payload>.<signature>`; the payload is base64url JSON
-`{ "typ": "st", "project", "entry", "exp", "scopes"? }` and the signature its HMAC-SHA256 under
+`{ "typ": "st", "project", "entry", "exp", "scopes"?, "ops"? }` and the signature its HMAC-SHA256 under
 a key derived from `SESSION_SECRET` and `"st"`. Nothing is stored per token. On every request
 the Worker verifies the signature, `typ`, `exp` and `project`, that the credential is not
-`admin`, that `scopes` are present exactly for `publish`, and that the `login` entry named by
-`entry` still exists and is active: expiring or removing the entry, deleting the credential or
+lacks the role (`read` for a pull token, `publish` when `scopes` are present, `admin` when `ops`
+are present; a token never has both), and that the `login` entry named by
+`entry` still exists and is active and its scope includes the role: expiring or removing the entry, deleting the credential or
 changing `SESSION_SECRET` ends every token it issued (within the cache time of 2.4).
 
 The one-time code's shared secret has to be recoverable, so it is stored AES-GCM encrypted
@@ -455,13 +486,13 @@ type AuthEntry = KeyAuthEntry | GhAuthEntry | LoginAuthEntry;
 
 interface Credential {
   project: string; // local slug
-  roles: Kind[]; // ["admin"], or a non-empty subset of ["read", "publish"]
+  roles: Kind[]; // a non-empty subset of ["read", "publish", "admin"]
   auth: AuthEntry[]; // includes expired entries until the hourly cron removes them
   read_grants: Grant[]; // [] without the "read" role
   publish_grants: Grant[]; // [] without the "publish" role
-  /** Deprecated, kept for clients written before roles: "read" when the credential holds it, else its only other role. */
+  /** Deprecated, kept for clients written before roles: "admin" when the credential holds it, else "read" when it holds that, else "publish". */
   kind: Kind;
-  /** Deprecated: the grants of `kind` (always [] for "admin"). */
+  /** Deprecated: the grants of `kind` ([] for "admin"). */
   grants: Grant[];
 }
 
@@ -691,12 +722,15 @@ Any role. Response `200`:
 
 `roles` are the roles this token may use: the credential's roles within the scope of the secret
 that authenticated the request. `access` has one list of grants per such role (`read`,
-`publish`); it has no key for a role the token may not use, and is `{}` for `admin`. `kind` and
-`grants` are the legacy view: `read` and its grants when the token may read, otherwise
-`publish` and its grants, `admin` and `[]` for admin.
+`publish`); it has no key for a role the token may not use, and is `{}` for a token that has
+only `admin`. `kind` and `grants` are the legacy view: `admin` and `[]` when the token may
+administer, otherwise `read` and its grants when it may read, otherwise `publish` and its
+grants.
 
 A publish login token (2.6) adds `"scopes": [{ "eco", "package", "version" }]`, the only
-versions it may publish.
+versions it may publish. A yank or delete login token adds `"ops": [{ "op", "eco", "package",
+"version"? }]`, the only operations it may perform; its `roles` are `["admin"]`, `access` is `{}`
+and the legacy `kind` is `admin` with `grants` `[]`.
 
 `project` is `[<source>.]<project>` (e.g. `okta.shop-frontend` for a provider-backed
 credential); for an `_:gh.<jwt>` token it is the resolved project name, never `_` (2.5). Grants are returned as stored, with `transitive`; they are `[]` for `admin`.
@@ -1346,15 +1380,15 @@ Role `admin`. Creates a credential and, by default, its first `key` secret.
 
 Request:
 
-| Field            | Type     | Required | Description                                                                                                                                                                                                           |
-| ---------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `project`        | string   | yes      | slug `[a-z0-9][a-z0-9-]{1,62}`                                                                                                                                                                                        |
-| `roles`          | string[] | yes\*    | `["admin"]`, or a non-empty list of `read` and `publish`                                                                                                                                                              |
-| `kind`           | string   | yes\*    | legacy form of `roles` with one role: `read`, `publish` or `admin`; not together with `roles`                                                                                                                         |
-| `read_grants`    | Grant[]  | no       | default `[]`; must be empty or absent without the `read` role                                                                                                                                                         |
-| `publish_grants` | Grant[]  | no       | default `[]`; must be empty or absent without the `publish` role                                                                                                                                                      |
-| `grants`         | Grant[]  | no       | legacy form: the grants of a credential with one role; `400` for two roles, and not together with `read_grants` or `publish_grants`; empty or absent for `admin`                                                      |
-| `secret`         | object   | no       | the first auth entry, same shape as the body of 6.17 (`scope` required with two roles); default `{ "type": "key" }`; `null` creates the credential **without** a secret (not for `admin`, which needs one to sign in) |
+| Field            | Type     | Required | Description                                                                                                                                                                                                                                       |
+| ---------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`        | string   | yes      | slug `[a-z0-9][a-z0-9-]{1,62}`                                                                                                                                                                                                                    |
+| `roles`          | string[] | yes\*    | a non-empty list of `read`, `publish` and `admin`                                                                                                                                                                                                 |
+| `kind`           | string   | yes\*    | legacy form of `roles` with one role: `read`, `publish` or `admin`; not together with `roles`                                                                                                                                                     |
+| `read_grants`    | Grant[]  | no       | default `[]`; must be empty or absent without the `read` role                                                                                                                                                                                     |
+| `publish_grants` | Grant[]  | no       | default `[]`; must be empty or absent without the `publish` role                                                                                                                                                                                  |
+| `grants`         | Grant[]  | no       | legacy form: the grants of a credential with one role; `400` for two roles, and not together with `read_grants` or `publish_grants`; empty or absent for `admin`                                                                                  |
+| `secret`         | object   | no       | the first auth entry, same shape as the body of 6.17 (`scope` required with several roles); default `{ "type": "key" }`; `null` creates the credential **without** a secret (not for a credential that holds `admin`, which needs one to sign in) |
 
 \* One of `roles` and `kind`.
 
@@ -1427,13 +1461,15 @@ Request (at least one of the fields):
 access); a list for a role the credential does not hold (after `roles` is applied) must be
 empty. The legacy `grants` replaces the list of a credential with one role, and is
 `400 invalid_request` for two roles or together with `read_grants` or `publish_grants`.
-`roles` may add or remove `read` and `publish`; a credential cannot become or stop being an
-`admin`. A removed role loses its grants. Existing secrets keep exactly the roles they had
-(adding a role never widens them); removing a role is `400 invalid_request` while an active
-secret would be left with no role, so expire that secret first (6.18). Any other known field
+`roles` may add or remove any role, `admin` included, so an `admin` credential can be given
+`read` or `publish` and a `read` credential can become an administrator; the last credential
+that holds `admin` cannot lose it (`403 forbidden`). A removed role loses its grants. Existing
+secrets keep exactly the roles they had (adding a role never widens them, an `admin`'s login
+stays `admin`-only until its scope is edited); removing a role is `400 invalid_request` while
+an active secret would be left with no role, so expire that secret first (6.18). Any other known field
 (`project`, `kind`, `auth`) is `400 invalid_request`: identity cannot change, secrets are
-managed with 6.17 and 6.18. Non-empty grants on an `admin` credential are
-`400 invalid_request`.
+managed with 6.17 and 6.18. Non-empty grants on a credential whose only role is `admin`, and
+a list for a role the credential does not hold, are `400 invalid_request`.
 
 Response `200`: the updated `Credential`. Errors: `400 invalid_request`, `404 not_found`.
 
@@ -1457,25 +1493,25 @@ Role `admin`. Adds an auth entry.
 
 Request:
 
-| Field                 | Type           | Required          | Description                                                                                                                                             |
-| --------------------- | -------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`                | string         | yes               | `key`, `gh` or `login`                                                                                                                                  |
-| `scope`               | string[]       | two roles: yes    | the roles the secret may use: a non-empty list of the credential's `read` and `publish` roles; with one role the default is that role; none for `admin` |
-| `password`            | string         | no (`login` only) | the password; generated (24 base62 characters) when absent. A `key` never takes one: `400 invalid_request`                                              |
-| `description`         | string \| null | no                | a note, at most 200 characters, no control characters; trimmed, blank or `null` = none; editable later (6.22)                                           |
-| `replaces`            | string         | no (`gh` only)    | the `id` (or a prefix, 6.1) of a `gh` secret to replace: it expires now in the same write and an identical active entry is not a duplicate (see below)  |
-| `totp`                | boolean        | no (`login` only) | default `false`: also require a one-time code; the shared secret is generated and returned once                                                         |
-| `expires`             | string \| null | no                | RFC 3339 or `YYYY-MM-DD`; default `null` (never)                                                                                                        |
-| `repository`          | string         | `gh`: yes         | `owner/repo` or `owner/*` (2.5)                                                                                                                         |
-| `repository_id`       | string \| null | no (`gh` only)    | digits only; `null` = any                                                                                                                               |
-| `repository_owner_id` | string \| null | no (`gh` only)    | digits only; `null` = any                                                                                                                               |
-| `ref`                 | string \| null | no (`gh` only)    | glob over the full ref, e.g. `refs/heads/main` or `refs/tags/v*`; `null` = any                                                                          |
-| `workflow`            | string \| null | no (`gh` only)    | workflow file path, e.g. `.github/workflows/release.yml`, matched against the `workflow_ref` claim (2.5); `null` = any                                  |
-| `environment`         | string \| null | no (`gh` only)    | GitHub Actions environment name; `null` = any                                                                                                           |
-| `pin_on_first_use`    | boolean        | no (`gh` only)    | default `true`: the first matching token fills in a missing `repository_id` / `repository_owner_id` (2.5)                                               |
+| Field                 | Type           | Required           | Description                                                                                                                                            |
+| --------------------- | -------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `type`                | string         | yes                | `key`, `gh` or `login`                                                                                                                                 |
+| `scope`               | string[]       | several roles: yes | the roles the secret may use: a non-empty list of the credential's roles (`admin` too, when it holds it); with one role the default is that role       |
+| `password`            | string         | no (`login` only)  | the password; generated (24 base62 characters) when absent. A `key` never takes one: `400 invalid_request`                                             |
+| `description`         | string \| null | no                 | a note, at most 200 characters, no control characters; trimmed, blank or `null` = none; editable later (6.22)                                          |
+| `replaces`            | string         | no (`gh` only)     | the `id` (or a prefix, 6.1) of a `gh` secret to replace: it expires now in the same write and an identical active entry is not a duplicate (see below) |
+| `totp`                | boolean        | no (`login` only)  | default `false`: also require a one-time code; the shared secret is generated and returned once                                                        |
+| `expires`             | string \| null | no                 | RFC 3339 or `YYYY-MM-DD`; default `null` (never)                                                                                                       |
+| `repository`          | string         | `gh`: yes          | `owner/repo` or `owner/*` (2.5)                                                                                                                        |
+| `repository_id`       | string \| null | no (`gh` only)     | digits only; `null` = any                                                                                                                              |
+| `repository_owner_id` | string \| null | no (`gh` only)     | digits only; `null` = any                                                                                                                              |
+| `ref`                 | string \| null | no (`gh` only)     | glob over the full ref, e.g. `refs/heads/main` or `refs/tags/v*`; `null` = any                                                                         |
+| `workflow`            | string \| null | no (`gh` only)     | workflow file path, e.g. `.github/workflows/release.yml`, matched against the `workflow_ref` claim (2.5); `null` = any                                 |
+| `environment`         | string \| null | no (`gh` only)     | GitHub Actions environment name; `null` = any                                                                                                          |
+| `pin_on_first_use`    | boolean        | no (`gh` only)     | default `true`: the first matching token fills in a missing `repository_id` / `repository_owner_id` (2.5)                                              |
 
-Passwords: only a `login` entry has one, on any kind of credential (an `admin` can sign in to
-the panel with it): 12 to 128 characters of any script, printable, without `:` and without
+Passwords: only a `login` entry has one, on any kind of credential (one scoped to `admin` or
+`read` signs in to the panel with it): 12 to 128 characters of any script, printable, without `:` and without
 whitespace. A `password` on a `key` or `gh` entry, or a password outside these rules, is
 `400 invalid_request`. Passwords are stored as `pbkdf2-sha256$<iterations>$<salt
 base64>$<hash base64>` (2.6); the `id` of a `login` entry is opaque and stable, and a password
@@ -1487,8 +1523,9 @@ when the credential has no `login` entry) but cannot be created any more.
 Any of the `gh` fields (`pin_on_first_use` included) on a `key` entry is
 `400 invalid_request`, as is a `gh` entry identical (all six claim fields and the scope equal) to
 an existing active one; the same claims may appear twice with different scopes. A missing
-`scope` on a credential with both roles, an empty or repeated one, a role the credential does
-not hold, and any `scope` on an `admin` credential are `400 invalid_request`. **Editing a `gh`
+`scope` on a credential with several roles, an empty or repeated one, and a role the credential
+does not hold are `400 invalid_request`. A secret with `admin` in its scope administers the
+registry, so clients should confirm it. **Editing a `gh`
 entry** is adding a changed copy with `replaces`: the response is the new entry as usual, the
 replaced one gets `expires` = now (an earlier expiry is kept, an entry is never extended), both
 in one write, and the duplicate check ignores the replaced entry, so even an unchanged copy is
@@ -1607,6 +1644,21 @@ publish names every version to approve:
 }
 ```
 
+A yank or delete names what to approve the same way, with the purpose in `purpose`:
+
+```json
+{
+  "purpose": "yank",
+  "scopes": [{ "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" }]
+}
+```
+
+Every scope of a `yank` needs a `version`. A scope of a `delete` may leave `version` out (or
+send `null`) to mean the whole package with every version; a version and the whole package of
+the same package may both be listed. `eco` is not allowed for them. The session is approved
+by a credential with the `admin` role (2.6), and the poll (6.21) then returns a token with
+`"kind": "admin"` that lasts 15 minutes.
+
 `scopes` has 1 to `MAX_PUBLISH_SCOPES` entries (default 20, at most 100), and the resulting `url`
 may be at most 8000 characters (the signed session, scopes included, is in it); `eco` must be enabled, `version` valid for it, and `package` and
 `version` are returned in their stored form (NuGet and Swift names lower-cased, NuGet versions
@@ -1644,6 +1696,7 @@ one returned with the session (`401 unauthorized` otherwise). Responses:
   }
   ```
 
+  `kind` is `read` for a pull, `publish` for a publish and `admin` for a yank or delete.
   `token` includes `TOKEN_PREFIX` when it is set.
 
 - `403 forbidden`: the person refused. `404 not_found`: the session has expired.
@@ -1661,10 +1714,10 @@ At least one of the two is required. `description` is a string (trimmed, at most
 characters, no control characters) or `null`; blank or `null` clears it. `scope` is a
 non-empty list of unique roles within the credential's roles (6.17): it replaces the whole
 list and takes effect on the next request with that secret, and for a panel session started with
-a `login` it takes effect at once. It is `400 invalid_request` for an `admin` credential, for
-an empty or unknown list, and for a `gh` entry whose claims and new scope are identical to
-another active `gh` entry. Giving a secret the `publish` role lets whoever holds it publish, so
-clients should confirm it. Any other field is `400 invalid_request`. Response `200`:
+a `login` it takes effect at once. It is `400 invalid_request` for an empty or unknown list or
+a role the credential does not hold, and for a `gh` entry whose claims and new scope are
+identical to another active `gh` entry. Giving a secret the `publish` or `admin` role lets
+whoever holds it publish or administer, so clients should confirm it. Any other field is `400 invalid_request`. Response `200`:
 `{ "secret": <AuthEntry> }`. Errors: `400 invalid_request`, `404 not_found`.
 
 ### 6.19 `GET /api/v1/github/repository?name=<owner/repo>`
