@@ -19,6 +19,10 @@ semver.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 sreg-core.workspace = true
+sreg-eco-cargo.workspace = true
+sreg-eco-composer.workspace = true
+sreg-eco-npm.workspace = true
+sreg-eco-nuget.workspace = true
 time.workspace = true
 tokio.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }

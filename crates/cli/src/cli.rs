@@ -6,7 +6,7 @@ use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use sreg_core::Ecosystem;
 use url::Url;
 
-/// Publish packages to Serverless Registry and manage its credentials.
+/// Publish packages to Serverless Registry and configure package managers for it.
 #[derive(Parser)]
 #[command(name = "sreg", version, about, long_about = None)]
 pub struct Cli {
@@ -64,6 +64,12 @@ pub enum Command {
         command: CargoCommand,
     },
 
+    /// Package and publish NuGet packages
+    Nuget {
+        #[command(subcommand)]
+        command: NugetCommand,
+    },
+
     /// Show the identity and grants of the current token
     Whoami,
 
@@ -87,6 +93,9 @@ impl Command {
             Command::Cargo {
                 command: CargoCommand::Publish(_),
             } => "cargo publish",
+            Command::Nuget {
+                command: NugetCommand::Publish(_),
+            } => "nuget publish",
             Command::Whoami => "whoami",
             Command::Auth(_) => "auth",
             Command::Version => "version",
@@ -94,24 +103,36 @@ impl Command {
     }
 }
 
-/// Options shared by all `publish` commands.
+/// Authentication through GitHub Actions OIDC instead of REGISTRY_TOKEN.
+#[derive(Args)]
+pub struct OidcArgs {
+    /// Authenticate with a GitHub Actions OIDC token instead of REGISTRY_TOKEN
+    #[arg(long)]
+    pub oidc: bool,
+
+    /// Project the OIDC token is issued for (requires --oidc)
+    #[arg(long, value_name = "PROJECT", requires = "oidc")]
+    pub project: Option<String>,
+}
+
+/// Options shared by the `publish` commands of composer, npm, cargo and nuget.
 #[derive(Args)]
 pub struct PublishArgs {
     /// Directory of the project to publish
     #[arg(long, value_name = "DIR", default_value = ".")]
     pub path: PathBuf,
 
+    /// Version to publish (composer: instead of the git tag of HEAD, e.g. v1.2.3 ->
+    /// 1.2.3; npm, cargo and nuget: written into the manifest before packaging)
+    #[arg(long = "version", id = "package_version", value_name = "VERSION")]
+    pub version: Option<String>,
+
     /// Stop after the registry has accepted the upload declaration (`init`)
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Authenticate with a GitHub Actions OIDC token instead of REGISTRY_TOKEN
-    #[arg(long)]
-    pub oidc: bool,
-
-    /// Project the OIDC token is issued for
-    #[arg(long, value_name = "PROJECT", requires = "oidc")]
-    pub project: Option<String>,
+    #[command(flatten)]
+    pub oidc: OidcArgs,
 }
 
 #[derive(Subcommand)]
@@ -124,10 +145,6 @@ pub enum ComposerCommand {
 pub struct ComposerPublishArgs {
     #[command(flatten)]
     pub publish: PublishArgs,
-
-    /// Version to publish (defaults to the git tag of HEAD, e.g. v1.2.3 -> 1.2.3)
-    #[arg(long = "version", id = "package_version", value_name = "VERSION")]
-    pub version: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -162,6 +179,18 @@ pub struct CargoPublishArgs {
     pub cargo_args: Vec<String>,
 }
 
+#[derive(Subcommand)]
+pub enum NugetCommand {
+    /// Pack the project with `dotnet pack` and publish it
+    Publish(NugetPublishArgs),
+}
+
+#[derive(Args)]
+pub struct NugetPublishArgs {
+    #[command(flatten)]
+    pub publish: PublishArgs,
+}
+
 #[derive(Args)]
 pub struct AuthArgs {
     /// Package manager to configure
@@ -192,6 +221,7 @@ pub enum EcosystemArg {
     Composer,
     Npm,
     Cargo,
+    Nuget,
 }
 
 impl From<EcosystemArg> for Ecosystem {
@@ -200,6 +230,7 @@ impl From<EcosystemArg> for Ecosystem {
             EcosystemArg::Composer => Ecosystem::Composer,
             EcosystemArg::Npm => Ecosystem::Npm,
             EcosystemArg::Cargo => Ecosystem::Cargo,
+            EcosystemArg::Nuget => Ecosystem::Nuget,
         }
     }
 }
@@ -225,8 +256,30 @@ mod tests {
         else {
             panic!("expected composer publish");
         };
-        assert_eq!(args.version.as_deref(), Some("1.2.3"));
+        assert_eq!(args.publish.version.as_deref(), Some("1.2.3"));
         assert_eq!(args.publish.path, PathBuf::from("."));
+    }
+
+    #[test]
+    fn every_publish_command_accepts_the_common_flags() {
+        for eco in ["composer", "npm", "cargo", "nuget"] {
+            let cli = Cli::try_parse_from([
+                "sreg",
+                eco,
+                "publish",
+                "--version",
+                "2.0.0",
+                "--path",
+                "pkg",
+                "--dry-run",
+                "--oidc",
+                "--project",
+                "ci-acme",
+            ])
+            .unwrap();
+            assert_eq!(cli.command.name(), format!("{eco} publish"));
+        }
+        assert!(Cli::try_parse_from(["sreg", "cargo", "publish", "--tag", "next"]).is_err());
     }
 
     #[test]

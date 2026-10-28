@@ -2,9 +2,6 @@
 
 #![deny(unsafe_code)]
 
-// Parsed arguments are consumed as the commands get implemented. `allow` rather than
-// `expect`: whether rustc reports these fields as unread differs between versions.
-#[allow(dead_code)]
 mod cli;
 mod commands;
 mod context;
