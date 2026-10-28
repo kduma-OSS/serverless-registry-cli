@@ -37,7 +37,8 @@ pub enum LoginPurpose {
     },
     /// A publish token for exactly these package versions.
     Publish {
-        /// The versions to approve (1 to 20).
+        /// The versions to approve (at least 1; the registry caps the count with its
+        /// `MAX_PUBLISH_SCOPES` setting, 20 by default).
         scopes: Vec<PublishScope>,
     },
 }

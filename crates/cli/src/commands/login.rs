@@ -11,9 +11,6 @@ use crate::cli::{GlobalArgs, LoginArgs};
 use crate::commands::auth::shell_quote;
 use crate::output::Output;
 
-/// Most versions one publish token can name (the registry's limit).
-const MAX_SCOPES: usize = 20;
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct IssuedReport {
@@ -37,13 +34,11 @@ pub async fn run(global: &GlobalArgs, out: &Output, args: &LoginArgs) -> anyhow:
     })
 }
 
-/// A pull without `--publish`, otherwise a publish of the listed versions.
+/// A pull without `--publish`, otherwise a publish of the listed versions. How many the
+/// registry accepts is its `MAX_PUBLISH_SCOPES` setting, so it answers for the count.
 fn purpose(publish: &[String]) -> anyhow::Result<LoginPurpose> {
     if publish.is_empty() {
         return Ok(LoginPurpose::Pull { eco: None });
-    }
-    if publish.len() > MAX_SCOPES {
-        bail!("a token can name at most {MAX_SCOPES} package versions");
     }
     let scopes = publish
         .iter()
@@ -131,7 +126,11 @@ mod tests {
         assert_eq!(purpose(&[]).unwrap(), LoginPurpose::Pull { eco: None });
         let publish = purpose(&["npm:left-pad@1.0.0".to_owned()]).unwrap();
         assert!(matches!(publish, LoginPurpose::Publish { scopes } if scopes.len() == 1));
+        // The limit is the registry's to enforce, and an operator can raise it.
         let many: Vec<String> = (0..21).map(|i| format!("npm:p@1.0.{i}")).collect();
-        assert!(purpose(&many).is_err());
+        assert!(matches!(
+            purpose(&many).unwrap(),
+            LoginPurpose::Publish { scopes } if scopes.len() == 21
+        ));
     }
 }
