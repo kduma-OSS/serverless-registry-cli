@@ -1,0 +1,22 @@
+{
+    "name": "acme/sdk",
+    "description": "Client library for the Acme API.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Acme\\Sdk\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Acme\\Sdk\\Tests\\": "tests/"
+        }
+    }
+}

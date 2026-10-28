@@ -41,7 +41,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Composer {
             command: ComposerCommand::Publish(args),
         } => {
-            let packager = sreg_eco_composer::ComposerPackager;
+            let packager = sreg_eco_composer::ComposerPackager::new();
             publish::run_packager(global, &out, &packager, &args.publish, None, Vec::new()).await
         }
         #[cfg(feature = "npm")]
