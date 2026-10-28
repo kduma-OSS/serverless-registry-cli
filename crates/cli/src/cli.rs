@@ -47,7 +47,14 @@ pub struct GlobalArgs {
     pub json: bool,
 
     /// With --login: print the approval page instead of opening it in a browser
-    #[arg(long, env = "SREG_NO_BROWSER", global = true)]
+    // The variable takes the usual spellings (`1`, `true`, `yes`; `0`, `false` turn it off).
+    #[arg(
+        long,
+        env = "SREG_NO_BROWSER",
+        global = true,
+        action = ArgAction::SetTrue,
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
     pub no_browser: bool,
 
     /// Increase log verbosity (-v for debug, -vv for trace); logs go to stderr

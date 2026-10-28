@@ -105,6 +105,18 @@ async fn login_prints_an_export_line_and_keeps_the_rest_on_stderr() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_environment_can_turn_the_browser_off_with_the_usual_spellings() {
+    for value in ["1", "true", "yes"] {
+        let server = login_server("read").await;
+
+        sreg_with(&server, &["login"], &[("SREG_NO_BROWSER", value)])
+            .await
+            .success()
+            .stdout(predicate::str::starts_with("export REGISTRY_TOKEN="));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn login_never_sends_the_static_token() {
     let server = login_server("read").await;
 
