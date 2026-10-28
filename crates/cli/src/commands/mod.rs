@@ -9,7 +9,9 @@ mod nuget_config;
     feature = "npm",
     feature = "cargo",
     feature = "nuget",
-    feature = "generic"
+    feature = "generic",
+    feature = "swift",
+    feature = "maven"
 ))]
 mod publish;
 mod version;
@@ -21,10 +23,14 @@ use crate::cli::CargoCommand;
 use crate::cli::ComposerCommand;
 #[cfg(feature = "generic")]
 use crate::cli::GenericCommand;
+#[cfg(feature = "maven")]
+use crate::cli::MavenCommand;
 #[cfg(feature = "npm")]
 use crate::cli::NpmCommand;
 #[cfg(feature = "nuget")]
 use crate::cli::NugetCommand;
+#[cfg(feature = "swift")]
+use crate::cli::SwiftCommand;
 use crate::cli::{Cli, Command};
 use crate::output::Output;
 
@@ -82,6 +88,39 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 std::path::Path::new("."),
                 None,
                 &args.cargo_args,
+            )
+            .await
+        }
+        #[cfg(feature = "swift")]
+        Command::Swift {
+            command: SwiftCommand::Publish(args),
+        } => {
+            let packager = sreg_eco_swift::SwiftPackager;
+            publish::run_packager(
+                global,
+                &out,
+                &packager,
+                &args.publish,
+                &args.path,
+                None,
+                &[],
+            )
+            .await
+        }
+        #[cfg(feature = "maven")]
+        Command::Maven {
+            command: MavenCommand::Publish(args),
+        } => {
+            // The coordinates (`args.coords`) reach the packager once it is implemented.
+            let packager = sreg_eco_maven::MavenPackager;
+            publish::run_packager(
+                global,
+                &out,
+                &packager,
+                &args.publish,
+                &args.from_dir,
+                None,
+                &[],
             )
             .await
         }

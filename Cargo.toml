@@ -7,6 +7,8 @@ members = [
     "crates/eco-cargo",
     "crates/eco-generic",
     "crates/eco-nuget",
+    "crates/eco-swift",
+    "crates/eco-maven",
     "crates/cli",
 ]
 
@@ -25,6 +27,8 @@ sreg-eco-npm = { path = "crates/eco-npm", version = "0.1.0" }
 sreg-eco-cargo = { path = "crates/eco-cargo", version = "0.1.0" }
 sreg-eco-generic = { path = "crates/eco-generic", version = "0.1.0" }
 sreg-eco-nuget = { path = "crates/eco-nuget", version = "0.1.0" }
+sreg-eco-swift = { path = "crates/eco-swift", version = "0.1.0" }
+sreg-eco-maven = { path = "crates/eco-maven", version = "0.1.0" }
 
 # Command line and logging
 clap = { version = "4.6.7", features = ["derive", "env"] }

@@ -27,6 +27,8 @@ repository.
 | `sreg npm publish [--version <v> \| --tag-prefix <p>] [--tag <t>] [--workspace <w>] [-- <npm pack args>]` | Writes the version into `package.json` with `npm pkg set version=<v>` (when one is requested), runs `npm pack --json --pack-destination <tmp>` in the current directory and reads `package/package.json` from the tarball. Scoped packages only. `--tag` sets the dist-tag. See [Publishing an npm package](#publishing-an-npm-package). |
 | `sreg cargo publish [--version <v> \| --tag-prefix <p>] [--package <crate>] [-- <cargo package args>]` | Writes the version into the crate's `Cargo.toml` (formatting preserved), runs `cargo package --no-verify --allow-dirty -p <crate> --target-dir <tmp>` and describes the crate with a sparse-index line built from `cargo metadata`. See [Publishing a crate](#publishing-a-crate). |
 | `sreg nuget publish [--version <v> \| --tag-prefix <p>] [--project <csproj>] [--no-symbols] [-- <dotnet pack args>]` | Runs `dotnet pack <project> -o <tmp>` (the version as `-p:PackageVersion=<v>`), reads the `.nuspec` from the `.nupkg` and publishes the `.nupkg` and, unless `--no-symbols`, the `.snupkg`. See [Publishing a NuGet package](#publishing-a-nuget-package). |
+| `sreg swift publish [--version <v> \| --tag-prefix <p>] [--path <dir>]` | Not implemented yet (exits with `1`). |
+| `sreg maven publish [--version <v> \| --tag-prefix <p>] --from-dir <dir> [--coords <group:artifact>]` | Not implemented yet (exits with `1`). |
 | `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... [--meta-file <json>] [--spec <files.json>] [--no-append]` | Publishes files as one version of a generic package. `--label` applies to every file; `--spec` lists files with their own labels instead. Files are appended to an already published version (within the registry's append window) unless `--no-append` is given. Arguments after `--` are rejected. |
 | `sreg generic get <name> [<version>\|latest] [--label k=v]... [--out <dir>] [--prerelease]` | Downloads the files of a version matching the labels into `--out` after verifying size and SHA-256 and prints their paths; `--json` prints the feed entry without downloading. |
 | `sreg whoami` | Shows the identity and grants of the current token (`GET /api/v1/whoami`). |
@@ -303,7 +305,7 @@ In CI, pass both as environment variables from repository secrets.
 ## Building a smaller binary
 
 Each ecosystem is a Cargo feature of the `sreg-cli` crate: `composer`, `npm`, `cargo`,
-`nuget` and `generic`, all enabled by default. A binary for a single ecosystem:
+`nuget`, `generic`, `swift` and `maven`, all enabled by default. A binary for a single ecosystem:
 
 ```
 cargo build --release -p sreg-cli --no-default-features --features composer

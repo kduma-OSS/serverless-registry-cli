@@ -25,16 +25,22 @@ pub enum Ecosystem {
     Nuget,
     /// Arbitrary files grouped into versions, downloaded through the generic feed.
     Generic,
+    /// Swift packages resolved by the Swift Package Manager.
+    Swift,
+    /// Java artifacts resolved by Maven and Gradle.
+    Maven,
 }
 
 impl Ecosystem {
     /// All supported ecosystems.
-    pub const ALL: [Ecosystem; 5] = [
+    pub const ALL: [Ecosystem; 7] = [
         Ecosystem::Composer,
         Ecosystem::Npm,
         Ecosystem::Cargo,
         Ecosystem::Nuget,
         Ecosystem::Generic,
+        Ecosystem::Swift,
+        Ecosystem::Maven,
     ];
 
     /// The identifier used in the API and on the command line.
@@ -45,6 +51,8 @@ impl Ecosystem {
             Ecosystem::Cargo => "cargo",
             Ecosystem::Nuget => "nuget",
             Ecosystem::Generic => "generic",
+            Ecosystem::Swift => "swift",
+            Ecosystem::Maven => "maven",
         }
     }
 }
@@ -64,7 +72,7 @@ impl FromStr for Ecosystem {
             .find(|eco| eco.as_str() == s)
             .ok_or_else(|| {
                 Error::InvalidInput(format!(
-                    "unknown ecosystem `{s}`; expected one of: composer, npm, cargo, nuget, generic"
+                    "unknown ecosystem `{s}`; expected one of: composer, npm, cargo, nuget, generic, swift, maven"
                 ))
             })
     }
@@ -272,6 +280,14 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Ecosystem>("\"cargo\"").unwrap(),
             Ecosystem::Cargo
+        );
+        assert_eq!(
+            serde_json::to_string(&Ecosystem::Swift).unwrap(),
+            "\"swift\""
+        );
+        assert_eq!(
+            serde_json::from_str::<Ecosystem>("\"maven\"").unwrap(),
+            Ecosystem::Maven
         );
     }
 }

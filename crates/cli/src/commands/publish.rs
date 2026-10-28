@@ -8,7 +8,9 @@ use sreg_core::{Ecosystem, Error, Package};
     feature = "composer",
     feature = "npm",
     feature = "cargo",
-    feature = "nuget"
+    feature = "nuget",
+    feature = "swift",
+    feature = "maven"
 ))]
 use sreg_core::{PackageOptions, Packager};
 
@@ -16,7 +18,9 @@ use sreg_core::{PackageOptions, Packager};
     feature = "composer",
     feature = "npm",
     feature = "cargo",
-    feature = "nuget"
+    feature = "nuget",
+    feature = "swift",
+    feature = "maven"
 ))]
 use crate::cli::PublishArgs;
 use crate::cli::{GlobalArgs, OidcArgs};
@@ -28,7 +32,9 @@ use crate::output::{table, Output};
     feature = "composer",
     feature = "npm",
     feature = "cargo",
-    feature = "nuget"
+    feature = "nuget",
+    feature = "swift",
+    feature = "maven"
 ))]
 pub async fn run_packager(
     global: &GlobalArgs,

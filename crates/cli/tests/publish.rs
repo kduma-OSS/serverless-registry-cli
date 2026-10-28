@@ -23,19 +23,23 @@ async fn packaging_failures_stop_before_contacting_the_registry() {
         "cargo",
         #[cfg(feature = "nuget")]
         "nuget",
+        #[cfg(feature = "swift")]
+        "swift",
+        #[cfg(feature = "maven")]
+        "maven",
     ];
     for eco in ecosystems {
-        sreg_in(
-            &server,
-            empty.path(),
-            &[eco, "publish", "--version", "1.0.0", "--dry-run"],
-        )
-        .await
-        .code(1)
-        .stdout(predicate::str::is_empty())
-        .stderr(predicate::str::contains(format!(
-            "failed to package the {eco} project"
-        )));
+        let mut args = vec![eco, "publish", "--version", "1.0.0", "--dry-run"];
+        if eco == "maven" {
+            args.extend(["--from-dir", "."]);
+        }
+        sreg_in(&server, empty.path(), &args)
+            .await
+            .code(1)
+            .stdout(predicate::str::is_empty())
+            .stderr(predicate::str::contains(format!(
+                "failed to package the {eco} project"
+            )));
     }
 
     assert!(server.received_requests().await.unwrap().is_empty());

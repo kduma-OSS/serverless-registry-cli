@@ -28,6 +28,10 @@ crates/
   eco-composer/  # packaging and manifest extraction for Composer
   eco-npm/       # packaging through `npm pack` and manifest extraction
   eco-cargo/     # packaging through `cargo package` and manifest extraction
+  eco-nuget/     # packaging through `dotnet pack` and `.nuspec` extraction
+  eco-generic/   # arbitrary files as generic package versions
+  eco-swift/     # Swift packaging (stub)
+  eco-maven/     # Maven packaging (stub)
   cli/           # clap command tree, text and `--json` output, exit codes
 action/          # composite GitHub Action wrapping the published binaries
 dist-workspace.toml  # cargo-dist release configuration

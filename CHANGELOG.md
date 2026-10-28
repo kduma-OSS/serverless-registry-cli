@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Without `--version` and `--tag-prefix`, npm, cargo and nuget use the `v<semver>` tag on
   `HEAD` when there is one and the version of the project's manifest otherwise; changes
   `sreg` makes to `package.json` or `Cargo.toml` are reported on stderr.
+- Swift and Maven ecosystems (`Ecosystem::Swift`, `Ecosystem::Maven`), the stub crates
+  `sreg-eco-swift` and `sreg-eco-maven`, the Cargo features `swift` and `maven`, and the
+  commands `sreg swift publish` and `sreg maven publish --from-dir <dir>
+  [--coords <group:artifact>]`, which are not implemented yet.
 - Release tag selection shared by all packagers (`sreg_core::git`): exactly one tag
   `v<semver>` on `HEAD`, or `<prefix><semver>` with `--tag-prefix <prefix>`.
 - `--skip-existing` on every publish command: an already published version (or appended

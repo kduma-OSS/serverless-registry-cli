@@ -13,13 +13,15 @@ name = "sreg"
 path = "src/main.rs"
 
 [features]
-default = ["composer", "npm", "cargo", "nuget", "generic"]
+default = ["composer", "npm", "cargo", "nuget", "generic", "swift", "maven"]
 # Each feature enables one ecosystem: its packager crate and its subcommand.
 composer = ["dep:sreg-eco-composer"]
 npm = ["dep:sreg-eco-npm"]
 cargo = ["dep:sreg-eco-cargo"]
 nuget = ["dep:sreg-eco-nuget"]
 generic = ["dep:sreg-eco-generic"]
+swift = ["dep:sreg-eco-swift"]
+maven = ["dep:sreg-eco-maven"]
 
 [dependencies]
 anyhow.workspace = true
@@ -33,7 +35,9 @@ sreg-eco-cargo = { workspace = true, optional = true }
 sreg-eco-composer = { workspace = true, optional = true }
 sreg-eco-generic = { workspace = true, optional = true }
 sreg-eco-npm = { workspace = true, optional = true }
+sreg-eco-maven = { workspace = true, optional = true }
 sreg-eco-nuget = { workspace = true, optional = true }
+sreg-eco-swift = { workspace = true, optional = true }
 time.workspace = true
 tokio.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }

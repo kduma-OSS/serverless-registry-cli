@@ -20,6 +20,10 @@ fn help_lists_all_commands() {
         "nuget",
         #[cfg(feature = "generic")]
         "generic",
+        #[cfg(feature = "swift")]
+        "swift",
+        #[cfg(feature = "maven")]
+        "maven",
     ];
     for command in commands {
         assert = assert.stdout(predicate::str::contains(command));

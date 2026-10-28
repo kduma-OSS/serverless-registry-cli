@@ -149,6 +149,9 @@ impl Target {
                     "generic packages have no package manager; pass --token to `sreg generic get`"
                 )
             }
+            Ecosystem::Swift | Ecosystem::Maven => {
+                bail!("`sreg auth` does not support {eco} yet")
+            }
         })
     }
 

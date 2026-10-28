@@ -81,6 +81,20 @@ pub enum Command {
         command: GenericCommand,
     },
 
+    /// Package and publish Swift packages
+    #[cfg(feature = "swift")]
+    Swift {
+        #[command(subcommand)]
+        command: SwiftCommand,
+    },
+
+    /// Publish Maven artifacts
+    #[cfg(feature = "maven")]
+    Maven {
+        #[command(subcommand)]
+        command: MavenCommand,
+    },
+
     /// Show the identity and grants of the current token
     Whoami,
 
@@ -119,6 +133,14 @@ impl Command {
             Command::Generic {
                 command: GenericCommand::Get(_),
             } => "generic get",
+            #[cfg(feature = "swift")]
+            Command::Swift {
+                command: SwiftCommand::Publish(_),
+            } => "swift publish",
+            #[cfg(feature = "maven")]
+            Command::Maven {
+                command: MavenCommand::Publish(_),
+            } => "maven publish",
             Command::Whoami => "whoami",
             Command::Auth(_) => "auth",
             Command::Version => "version",
@@ -132,7 +154,9 @@ impl Command {
     feature = "npm",
     feature = "cargo",
     feature = "nuget",
-    feature = "generic"
+    feature = "generic",
+    feature = "swift",
+    feature = "maven"
 ))]
 #[derive(Args)]
 pub struct OidcArgs {
@@ -146,12 +170,15 @@ pub struct OidcArgs {
     pub project: Option<String>,
 }
 
-/// Options shared by the `publish` commands of composer, npm, cargo and nuget.
+/// Options shared by the `publish` commands of composer, npm, cargo, nuget, swift and
+/// maven.
 #[cfg(any(
     feature = "composer",
     feature = "npm",
     feature = "cargo",
-    feature = "nuget"
+    feature = "nuget",
+    feature = "swift",
+    feature = "maven"
 ))]
 #[derive(Args)]
 pub struct PublishArgs {
@@ -275,6 +302,46 @@ pub struct NugetPublishArgs {
     /// Extra arguments passed verbatim to `dotnet pack`
     #[arg(last = true, value_name = "DOTNET_ARGS")]
     pub dotnet_args: Vec<std::ffi::OsString>,
+}
+
+#[cfg(feature = "swift")]
+#[derive(Subcommand)]
+pub enum SwiftCommand {
+    /// Archive the Swift package and publish it
+    Publish(SwiftPublishArgs),
+}
+
+#[cfg(feature = "swift")]
+#[derive(Args)]
+pub struct SwiftPublishArgs {
+    /// Directory of the package to publish (with Package.swift)
+    #[arg(long, value_name = "DIR", default_value = ".")]
+    pub path: PathBuf,
+
+    #[command(flatten)]
+    pub publish: PublishArgs,
+}
+
+#[cfg(feature = "maven")]
+#[derive(Subcommand)]
+pub enum MavenCommand {
+    /// Publish the artifacts of a Maven build
+    Publish(MavenPublishArgs),
+}
+
+#[cfg(feature = "maven")]
+#[derive(Args)]
+pub struct MavenPublishArgs {
+    /// Directory holding the built artifacts (POM, JARs) to publish
+    #[arg(long, value_name = "DIR")]
+    pub from_dir: PathBuf,
+
+    /// Coordinates to publish under, `<group>:<artifact>` (default: from the POM)
+    #[arg(long, value_name = "GROUP:ARTIFACT")]
+    pub coords: Option<String>,
+
+    #[command(flatten)]
+    pub publish: PublishArgs,
 }
 
 #[cfg(feature = "generic")]
@@ -702,6 +769,45 @@ mod tests {
         };
         assert_eq!(args.version, "latest");
         assert_eq!(args.out, PathBuf::from("."));
+    }
+
+    #[cfg(all(feature = "swift", feature = "maven"))]
+    #[test]
+    fn swift_and_maven_publish_parse_their_flags() {
+        let cli = Cli::try_parse_from([
+            "sreg",
+            "swift",
+            "publish",
+            "--path",
+            "pkg",
+            "--version",
+            "1.0.0",
+        ])
+        .unwrap();
+        assert_eq!(cli.command.name(), "swift publish");
+
+        let cli = Cli::try_parse_from([
+            "sreg",
+            "maven",
+            "publish",
+            "--from-dir",
+            "target/repo",
+            "--coords",
+            "com.acme:sdk",
+            "--tag-prefix",
+            "sdk/v",
+        ])
+        .unwrap();
+        let Command::Maven {
+            command: MavenCommand::Publish(args),
+        } = cli.command
+        else {
+            panic!("expected maven publish");
+        };
+        assert_eq!(args.from_dir, PathBuf::from("target/repo"));
+        assert_eq!(args.coords.as_deref(), Some("com.acme:sdk"));
+        assert_eq!(args.publish.tag_prefix.as_deref(), Some("sdk/v"));
+        assert!(Cli::try_parse_from(["sreg", "maven", "publish"]).is_err());
     }
 
     #[test]

@@ -1647,8 +1647,10 @@ dependencies = [
  "sreg-eco-cargo",
  "sreg-eco-composer",
  "sreg-eco-generic",
+ "sreg-eco-maven",
  "sreg-eco-npm",
  "sreg-eco-nuget",
+ "sreg-eco-swift",
  "tar",
  "tempfile",
  "time",
@@ -1719,6 +1721,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sreg-eco-maven"
+version = "0.1.0"
+dependencies = [
+ "sreg-core",
+]
+
+[[package]]
 name = "sreg-eco-npm"
 version = "0.1.0"
 dependencies = [
@@ -1741,6 +1750,13 @@ dependencies = [
  "tempfile",
  "tracing",
  "zip",
+]
+
+[[package]]
+name = "sreg-eco-swift"
+version = "0.1.0"
+dependencies = [
+ "sreg-core",
 ]
 
 [[package]]
