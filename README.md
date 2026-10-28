@@ -415,11 +415,13 @@ jobs:
 
 ## GitHub Action
 
-The composite action in [`action/`](action/README.md) installs the `sreg` release it was
-published with, verifies its checksum and publishes the package of the repository:
+The composite action
+[`kduma-OSS/serverless-registry-publish-action`](https://github.com/kduma-OSS/serverless-registry-publish-action)
+installs a `sreg` release, verifies its checksum and publishes the package of the
+repository:
 
 ```yaml
-- uses: kduma-OSS/serverless-registry-cli/action@v1
+- uses: kduma-OSS/serverless-registry-publish-action@v1
   with:
     ecosystem: composer
     registry: https://packages.example.com
@@ -430,8 +432,12 @@ Without `token`, it authenticates with the job's OIDC token (the job needs
 `permissions: id-token: write`). The action takes the ecosystem's options as inputs
 (`version`, `tag-prefix`, `path`, `workspace`, `package`, `project`, `from-dir`,
 `coords`, `scope`, `args`, …), skips already published versions by default and sets the
-outputs `name`, `version`, `url` and `skipped`. See [`action/README.md`](action/README.md)
-for every input and examples for each ecosystem and for monorepos.
+outputs `name`, `version`, `url` and `skipped`. It is versioned on its own: `@v1` follows
+its latest 1.x release, and each release installs a given `sreg` release by default
+(`sreg-version` pins another one); a new stable `sreg` release is picked up by a patch
+release of the action. See its
+[README](https://github.com/kduma-OSS/serverless-registry-publish-action#readme) for every
+input and examples for each ecosystem and for monorepos.
 
 ## Publishing from GitHub Actions
 
@@ -594,10 +600,13 @@ See [`AGENTS.md`](AGENTS.md) for the workspace layout and contribution rules.
 
 Releases are cut from `main` with the manual **Bump and release** workflow
 (`.github/workflows/bump-and-release.yml`): it computes the next version (`prerelease`,
-`patch`, `minor`, `custom`, …), updates `Cargo.toml`, `Cargo.lock`, `action/VERSION` and
-`CHANGELOG.md`, commits and tags `v<version>`, and starts the cargo-dist `Release`
-workflow. Tags must match the package version; use the Bump and release workflow rather
-than tagging by hand. See [`docs/releasing.md`](docs/releasing.md).
+`patch`, `minor`, `custom`, …), updates `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`,
+commits and tags `v<version>`, and starts the cargo-dist `Release` workflow. Tags must
+match the package version; use the Bump and release workflow rather than tagging by hand.
+After a stable release, the
+[publish action](https://github.com/kduma-OSS/serverless-registry-publish-action) is
+released with the new `sreg` as its default (started from the `Release` workflow, or by
+the action repository's hourly sync). See [`docs/releasing.md`](docs/releasing.md).
 
 ## License
 
