@@ -41,7 +41,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Time allowed for `publish/commit`, which copies the archive inside the registry.
 const COMMIT_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Default wait for a `429` without `Retry-After` (`docs/api.md` 4).
+/// Default wait for a `429` without `Retry-After`.
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(10);
 
 /// Longest wait honoured for `Retry-After`.
@@ -196,22 +196,22 @@ impl Client {
             .await
     }
 
-    /// `GET /api/v1/version` (6.2).
+    /// `GET /api/v1/version`.
     pub async fn version(&self) -> Result<VersionInfo> {
         self.get(&["version"]).await
     }
 
-    /// `GET /api/v1/whoami` (6.3).
+    /// `GET /api/v1/whoami`.
     pub async fn whoami(&self) -> Result<Whoami> {
         self.get(&["whoami"]).await
     }
 
-    /// `POST /api/v1/publish/init` (6.4).
+    /// `POST /api/v1/publish/init`.
     pub async fn publish_init(&self, request: &PublishInitRequest) -> Result<PublishInitResponse> {
         self.post(&["publish", "init"], Some(request)).await
     }
 
-    /// `POST /api/v1/publish/commit` (6.5). A single attempt; the caller retries.
+    /// `POST /api/v1/publish/commit`. A single attempt; the caller retries.
     pub async fn publish_commit(&self, upload_id: &str) -> Result<PublishCommitResponse> {
         let body = serde_json::to_value(PublishCommitRequest {
             upload_id: upload_id.to_owned(),
@@ -226,23 +226,23 @@ impl Client {
         .await
     }
 
-    /// `GET /api/v1/packages` (6.6).
+    /// `GET /api/v1/packages`.
     pub async fn packages(&self) -> Result<PackageList> {
         self.get(&["packages"]).await
     }
 
-    /// `GET /api/v1/packages/<eco>/<name>` (6.7).
+    /// `GET /api/v1/packages/<eco>/<name>`.
     pub async fn package(&self, eco: Ecosystem, name: &str) -> Result<PackageEntry> {
         self.get(&["packages", eco.as_str(), name]).await
     }
 
-    /// `POST /api/v1/packages/<eco>/<name>/<version>/yank` (6.8).
+    /// `POST /api/v1/packages/<eco>/<name>/<version>/yank`.
     pub async fn yank(&self, eco: Ecosystem, name: &str, version: &str) -> Result<YankResponse> {
         self.post::<_, ()>(&["packages", eco.as_str(), name, version, "yank"], None)
             .await
     }
 
-    /// `DELETE /api/v1/packages/<eco>/<name>/<version>` (6.9).
+    /// `DELETE /api/v1/packages/<eco>/<name>/<version>`.
     pub async fn delete_version(
         &self,
         eco: Ecosystem,
@@ -253,7 +253,7 @@ impl Client {
             .await
     }
 
-    /// `DELETE /api/v1/packages/<eco>/<name>` (6.10).
+    /// `DELETE /api/v1/packages/<eco>/<name>`.
     pub async fn delete_package(
         &self,
         eco: Ecosystem,
@@ -263,18 +263,18 @@ impl Client {
             .await
     }
 
-    /// `POST /api/v1/packages/<eco>/<name>/reindex` (6.11).
+    /// `POST /api/v1/packages/<eco>/<name>/reindex`.
     pub async fn reindex(&self, eco: Ecosystem, name: &str) -> Result<ReindexResponse> {
         self.post::<_, ()>(&["packages", eco.as_str(), name, "reindex"], None)
             .await
     }
 
-    /// `GET /api/v1/credentials` (6.12).
+    /// `GET /api/v1/credentials`.
     pub async fn credentials(&self) -> Result<CredentialList> {
         self.get(&["credentials"]).await
     }
 
-    /// `POST /api/v1/credentials` (6.13).
+    /// `POST /api/v1/credentials`.
     pub async fn create_credential(
         &self,
         request: &CreateCredentialRequest,
@@ -282,12 +282,12 @@ impl Client {
         self.post(&["credentials"], Some(request)).await
     }
 
-    /// `GET /api/v1/credentials/<project>` (6.14).
+    /// `GET /api/v1/credentials/<project>`.
     pub async fn credential(&self, project: &str) -> Result<Credential> {
         self.get(&["credentials", project]).await
     }
 
-    /// `PATCH /api/v1/credentials/<project>` (6.15).
+    /// `PATCH /api/v1/credentials/<project>`.
     pub async fn update_grants(&self, project: &str, grants: &[Grant]) -> Result<Credential> {
         let body = UpdateGrantsRequest {
             grants: grants.to_vec(),
@@ -295,12 +295,12 @@ impl Client {
         self.patch(&["credentials", project], &body).await
     }
 
-    /// `DELETE /api/v1/credentials/<project>` (6.16).
+    /// `DELETE /api/v1/credentials/<project>`.
     pub async fn delete_credential(&self, project: &str) -> Result<DeleteCredentialResponse> {
         self.delete::<_, ()>(&["credentials", project], None).await
     }
 
-    /// `POST /api/v1/credentials/<project>/secrets` (6.17).
+    /// `POST /api/v1/credentials/<project>/secrets`.
     pub async fn add_secret(
         &self,
         project: &str,
@@ -310,7 +310,7 @@ impl Client {
             .await
     }
 
-    /// `DELETE /api/v1/credentials/<project>/secrets/<hash-prefix>` (6.18).
+    /// `DELETE /api/v1/credentials/<project>/secrets/<hash-prefix>`.
     ///
     /// `expires` defaults to now on the registry side.
     pub async fn expire_secret(

@@ -108,7 +108,8 @@ async fn package_names_are_encoded_as_one_segment() {
         .and(path("/api/v1/packages/npm/@acme%2Fsdk/2.3.1/yank"))
         .respond_with(ok(json!({
             "eco": "npm", "name": "@acme/sdk", "version": "2.3.1",
-            "published": "2026-10-28T10:12:00Z", "yanked": true, "size": 48213, "sha256": "9f2c"
+            "published": "2026-10-28T10:12:00Z", "yanked": true,
+            "files": [{ "name": "sdk-2.3.1.tgz", "size": 48213, "sha256": "9f2c", "role": "archive" }]
         })))
         .expect(1)
         .mount(&server)

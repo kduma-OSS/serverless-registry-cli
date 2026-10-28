@@ -1,4 +1,4 @@
-//! Resolution of the registry token shared by all commands (`docs/api.md` 7.1).
+//! Resolution of the registry token shared by all commands.
 
 use url::Url;
 

@@ -1,4 +1,4 @@
-//! GitHub Actions OIDC tokens (`docs/api.md` 2.1 and 7.1).
+//! GitHub Actions OIDC tokens.
 //!
 //! Inside a job with `permissions: id-token: write`, GitHub exposes
 //! `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`. The JWT obtained

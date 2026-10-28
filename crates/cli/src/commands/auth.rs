@@ -113,6 +113,11 @@ impl Target {
                     name: registry_name.to_owned(),
                 }
             }
+            Ecosystem::Generic => {
+                bail!(
+                    "generic packages have no package manager; pass --token to `sreg generic get`"
+                )
+            }
         })
     }
 

@@ -1,9 +1,10 @@
-//! Upload of an archive to the presigned `PUT` URL returned by `publish/init`.
+//! Upload of a file to a presigned `PUT` URL returned by `publish/init`.
 //!
-//! The archive is streamed from disk with a fixed `Content-Length` (never chunked) and
+//! The file is streamed from disk with a fixed `Content-Length` (never chunked) and
 //! exactly the headers returned by `init`. Transport errors and `5xx` answers are
-//! retried (`docs/api.md` 7.2); `403` is reported as [`Error::UploadExpired`] so the
-//! caller can start again from `init`; any other `4xx` is fatal.
+//! retried (3 attempts, 1 s and 2 s backoff with jitter); `403` is reported as
+//! [`Error::UploadExpired`] so the caller can start again from `init`; any other `4xx`
+//! is fatal.
 //!
 //! The presigned URL carries credentials in its query string, so it is never logged
 //! and transport errors are stripped of it.
@@ -101,7 +102,8 @@ impl Uploader {
         let actual = file.metadata().await?.len();
         if actual != size {
             return Err(Error::InvalidInput(format!(
-                "the archive changed while publishing: expected {size} bytes, found {actual}"
+                "{} changed while publishing: expected {size} bytes, found {actual}",
+                path.display()
             )));
         }
 
@@ -160,7 +162,7 @@ fn build_headers(headers: &BTreeMap<String, String>, size: u64) -> Result<Header
     match declared {
         Some(declared) if declared == size => Ok(map),
         Some(declared) => Err(Error::InvalidInput(format!(
-            "the registry expects {declared} bytes but the archive has {size}"
+            "the registry expects {declared} bytes but the file has {size}"
         ))),
         None => {
             map.insert(CONTENT_LENGTH, HeaderValue::from(size));

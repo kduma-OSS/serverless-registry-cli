@@ -1,4 +1,4 @@
-//! Retry policy with exponential backoff and jitter (`docs/api.md` 7.2 and 7.3).
+//! Retry policy with exponential backoff and jitter.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};

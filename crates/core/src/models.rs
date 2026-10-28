@@ -15,7 +15,7 @@ use time::OffsetDateTime;
 use crate::error::{Error, Result};
 use crate::packager::Ecosystem;
 
-/// Role of a credential (`docs/api.md` 2.4).
+/// Role of a credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -44,7 +44,7 @@ impl fmt::Display for Kind {
     }
 }
 
-/// Access to a set of packages and versions of one ecosystem (`docs/api.md` 5.1).
+/// Access to a set of packages and versions of one ecosystem.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grant {
     /// Ecosystem the grant applies to.
@@ -72,8 +72,9 @@ impl Grant {
         let package = parts.next().ok_or_else(|| invalid("missing package"))?;
         let versions = parts.next().unwrap_or("*");
 
-        let eco = Ecosystem::from_str(eco)
-            .map_err(|_| invalid("unknown ecosystem, expected one of composer, npm, cargo"))?;
+        let eco = Ecosystem::from_str(eco).map_err(|_| {
+            invalid("unknown ecosystem, expected one of composer, npm, cargo, generic")
+        })?;
         if package.is_empty() {
             return Err(invalid("empty package"));
         }
@@ -104,7 +105,7 @@ impl fmt::Display for Grant {
     }
 }
 
-/// Body of every non-2xx response (`docs/api.md` 4).
+/// Body of every non-2xx response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorBody {
     /// Stable, machine-readable error code, e.g. `version_exists`.
@@ -113,7 +114,7 @@ pub struct ErrorBody {
     pub message: String,
 }
 
-/// `GET /api/v1/version` (`docs/api.md` 6.2).
+/// `GET /api/v1/version`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInfo {
@@ -125,7 +126,7 @@ pub struct VersionInfo {
     pub schema_version: u64,
 }
 
-/// `GET /api/v1/whoami` (`docs/api.md` 6.3).
+/// `GET /api/v1/whoami`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Whoami {
     /// `[<source>.]<project>` of the credential.
@@ -136,7 +137,24 @@ pub struct Whoami {
     pub grants: Vec<Grant>,
 }
 
-/// `POST /api/v1/publish/init` request (`docs/api.md` 6.4).
+/// A file declared in `POST /api/v1/publish/init`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishFile {
+    /// File name in the registry.
+    pub name: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// Lower-case hex SHA-256.
+    pub sha256: String,
+    /// Role of the file; `archive` for composer, npm and cargo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Free-form labels (generic packages).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+}
+
+/// `POST /api/v1/publish/init` request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishInitRequest {
     /// Ecosystem of the package.
@@ -145,31 +163,50 @@ pub struct PublishInitRequest {
     pub name: String,
     /// Version being published.
     pub version: String,
-    /// Archive file name.
-    pub file: String,
-    /// Archive size in bytes.
-    pub size: u64,
-    /// Lower-case hex SHA-256 of the archive.
-    pub sha256: String,
-    /// Ecosystem-native manifest.
+    /// Files of the version.
+    pub files: Vec<PublishFile>,
+    /// Ecosystem-native manifest, or the free-form `meta` object for generic packages.
     pub manifest: serde_json::Value,
     /// npm dist-tag (npm only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    /// Add the files to an already published version (generic only).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub append: bool,
 }
 
-/// `POST /api/v1/publish/init` response (`docs/api.md` 6.4).
+/// Upload instructions for one file in the `init` response.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileUpload {
+    /// File name, as declared.
+    pub name: String,
+    /// Presigned `PUT` URL. Treat it as a secret: never print or log it.
+    pub put_url: String,
+    /// Exactly the headers the upload must carry (lower-case names).
+    pub headers: BTreeMap<String, String>,
+}
+
+impl fmt::Debug for FileUpload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FileUpload")
+            .field("name", &self.name)
+            .field("put_url", &"<redacted>")
+            .field("headers", &self.headers)
+            .finish()
+    }
+}
+
+/// `POST /api/v1/publish/init` response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishInitResponse {
     /// Identifier to pass to `commit`.
     pub upload_id: String,
-    /// Presigned `PUT` URL. Treat it as a secret: never print or log it.
-    pub put_url: String,
-    /// When `put_url` stops working (RFC 3339).
+    /// When the presigned URLs stop working (RFC 3339).
     pub expires: String,
-    /// Exactly the headers the upload must carry (lower-case names).
-    pub headers: BTreeMap<String, String>,
+    /// One entry per declared file.
+    pub uploads: Vec<FileUpload>,
 }
 
 impl PublishInitResponse {
@@ -179,18 +216,7 @@ impl PublishInitResponse {
     }
 }
 
-impl fmt::Debug for PublishInitResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PublishInitResponse")
-            .field("upload_id", &self.upload_id)
-            .field("put_url", &"<redacted>")
-            .field("expires", &self.expires)
-            .field("headers", &self.headers)
-            .finish()
-    }
-}
-
-/// `POST /api/v1/publish/commit` request (`docs/api.md` 6.5).
+/// `POST /api/v1/publish/commit` request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishCommitRequest {
@@ -198,7 +224,16 @@ pub struct PublishCommitRequest {
     pub upload_id: String,
 }
 
-/// `POST /api/v1/publish/commit` response (`docs/api.md` 6.5).
+/// A published file in the `commit` response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishedFile {
+    /// File name.
+    pub name: String,
+    /// Download URL.
+    pub url: String,
+}
+
+/// `POST /api/v1/publish/commit` response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishCommitResponse {
     /// Ecosystem of the package.
@@ -207,11 +242,31 @@ pub struct PublishCommitResponse {
     pub name: String,
     /// Published version.
     pub version: String,
-    /// Download URL of the archive in the ecosystem's native protocol.
+    /// Download URL of the archive (composer, npm, cargo) or of the version (generic).
     pub url: String,
+    /// Download URL of every file of the version.
+    #[serde(default)]
+    pub files: Vec<PublishedFile>,
 }
 
-/// One version of a package (`PackageVersion` in `docs/api.md` 5).
+/// A file of a published version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileEntry {
+    /// File name.
+    pub name: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// Lower-case hex SHA-256.
+    pub sha256: String,
+    /// Role of the file, e.g. `archive`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Labels (generic packages).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+}
+
+/// One version of a package (`PackageVersion`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionEntry {
     /// Version string.
@@ -220,13 +275,11 @@ pub struct VersionEntry {
     pub published: String,
     /// Whether the version is yanked.
     pub yanked: bool,
-    /// Archive size in bytes.
-    pub size: u64,
-    /// Lower-case hex SHA-256 of the archive.
-    pub sha256: String,
+    /// Files of the version.
+    pub files: Vec<FileEntry>,
 }
 
-/// A package with its versions (`Package` in `docs/api.md` 5).
+/// A package with its versions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageEntry {
     /// Ecosystem of the package.
@@ -237,14 +290,14 @@ pub struct PackageEntry {
     pub versions: Vec<VersionEntry>,
 }
 
-/// `GET /api/v1/packages` (`docs/api.md` 6.6).
+/// `GET /api/v1/packages`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageList {
     /// Packages sorted by ecosystem and name.
     pub packages: Vec<PackageEntry>,
 }
 
-/// `POST /api/v1/packages/<eco>/<name>/<version>/yank` (`docs/api.md` 6.8).
+/// `POST /api/v1/packages/<eco>/<name>/<version>/yank`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct YankResponse {
     /// Ecosystem of the package.
@@ -256,7 +309,7 @@ pub struct YankResponse {
     pub version: VersionEntry,
 }
 
-/// `DELETE /api/v1/packages/<eco>/<name>/<version>` (`docs/api.md` 6.9).
+/// `DELETE /api/v1/packages/<eco>/<name>/<version>`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteVersionResponse {
     /// Ecosystem of the package.
@@ -269,7 +322,7 @@ pub struct DeleteVersionResponse {
     pub deleted: bool,
 }
 
-/// `DELETE /api/v1/packages/<eco>/<name>` (`docs/api.md` 6.10).
+/// `DELETE /api/v1/packages/<eco>/<name>`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeletePackageResponse {
@@ -281,7 +334,7 @@ pub struct DeletePackageResponse {
     pub deleted_versions: Vec<String>,
 }
 
-/// `POST /api/v1/packages/<eco>/<name>/reindex` (`docs/api.md` 6.11).
+/// `POST /api/v1/packages/<eco>/<name>/reindex`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReindexResponse {
     /// Ecosystem of the package.
@@ -292,7 +345,7 @@ pub struct ReindexResponse {
     pub manifests: u64,
 }
 
-/// Type of an auth entry (`docs/api.md` 2.1).
+/// Type of an auth entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SecretType {
@@ -322,7 +375,7 @@ impl fmt::Display for SecretType {
     }
 }
 
-/// An auth entry of a credential (`KeyAuthEntry` / `GhAuthEntry` in `docs/api.md` 5).
+/// An auth entry of a credential.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthEntry {
     /// 12 lower-case hex characters identifying the entry.
@@ -362,7 +415,7 @@ impl AuthEntry {
     }
 }
 
-/// A credential (`Credential` in `docs/api.md` 5).
+/// A credential.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credential {
     /// Local project slug.
@@ -375,14 +428,14 @@ pub struct Credential {
     pub grants: Vec<Grant>,
 }
 
-/// `GET /api/v1/credentials` (`docs/api.md` 6.12).
+/// `GET /api/v1/credentials`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CredentialList {
     /// Credentials sorted by project.
     pub credentials: Vec<Credential>,
 }
 
-/// `POST /api/v1/credentials/<project>/secrets` request (`docs/api.md` 6.17); also the
+/// `POST /api/v1/credentials/<project>/secrets` request; also the
 /// `secret` field of [`CreateCredentialRequest`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddSecretRequest {
@@ -416,7 +469,7 @@ impl AddSecretRequest {
     }
 }
 
-/// `POST /api/v1/credentials/<project>/secrets` response (`docs/api.md` 6.17).
+/// `POST /api/v1/credentials/<project>/secrets` response.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddSecretResponse {
     /// The new entry.
@@ -435,7 +488,7 @@ impl fmt::Debug for AddSecretResponse {
     }
 }
 
-/// `POST /api/v1/credentials` request (`docs/api.md` 6.13).
+/// `POST /api/v1/credentials` request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateCredentialRequest {
     /// Project slug.
@@ -449,7 +502,7 @@ pub struct CreateCredentialRequest {
     pub secret: Option<AddSecretRequest>,
 }
 
-/// `POST /api/v1/credentials` response (`docs/api.md` 6.13).
+/// `POST /api/v1/credentials` response.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateCredentialResponse {
     /// The created credential.
@@ -468,14 +521,14 @@ impl fmt::Debug for CreateCredentialResponse {
     }
 }
 
-/// `PATCH /api/v1/credentials/<project>` request (`docs/api.md` 6.15).
+/// `PATCH /api/v1/credentials/<project>` request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateGrantsRequest {
     /// The new, complete list of grants.
     pub grants: Vec<Grant>,
 }
 
-/// `DELETE /api/v1/credentials/<project>` (`docs/api.md` 6.16).
+/// `DELETE /api/v1/credentials/<project>`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteCredentialResponse {
     /// The deleted project.
@@ -485,7 +538,7 @@ pub struct DeleteCredentialResponse {
 }
 
 /// `DELETE /api/v1/credentials/<project>/secrets/<hash-prefix>` request
-/// (`docs/api.md` 6.18).
+///.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpireSecretRequest {
     /// When the entry expires (RFC 3339 or `YYYY-MM-DD`); omitted means now.
@@ -494,7 +547,7 @@ pub struct ExpireSecretRequest {
 }
 
 /// `DELETE /api/v1/credentials/<project>/secrets/<hash-prefix>` response
-/// (`docs/api.md` 6.18).
+///.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpireSecretResponse {
     /// The updated entry.
@@ -593,34 +646,80 @@ mod tests {
             eco: Ecosystem::Npm,
             name: "@acme/sdk".into(),
             version: "2.3.1".into(),
-            file: "sdk-2.3.1.tgz".into(),
-            size: 48213,
-            sha256: "9f".repeat(32),
+            files: vec![PublishFile {
+                name: "sdk-2.3.1.tgz".into(),
+                size: 48213,
+                sha256: "9f".repeat(32),
+                role: Some("archive".into()),
+                labels: BTreeMap::new(),
+            }],
             manifest: json!({ "name": "@acme/sdk", "version": "2.3.1" }),
             tag: None,
+            append: false,
         };
         let value = serde_json::to_value(&request).unwrap();
         assert_eq!(value["eco"], "npm");
-        assert_eq!(value["size"], 48213);
+        assert_eq!(
+            value["files"],
+            json!([{ "name": "sdk-2.3.1.tgz", "size": 48213, "sha256": "9f".repeat(32), "role": "archive" }])
+        );
         assert!(value.get("tag").is_none());
+        assert!(value.get("append").is_none());
     }
 
     #[test]
-    fn publish_init_response_parses_and_hides_url_in_debug() {
+    fn generic_init_request_carries_labels_and_append() {
+        let request = PublishInitRequest {
+            eco: Ecosystem::Npm,
+            name: "tools/cli".into(),
+            version: "1.0.0".into(),
+            files: vec![PublishFile {
+                name: "cli-linux.tar.gz".into(),
+                size: 1,
+                sha256: "ab".repeat(32),
+                role: None,
+                labels: BTreeMap::from([("os".to_owned(), "linux".to_owned())]),
+            }],
+            manifest: json!({}),
+            tag: None,
+            append: true,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["files"][0]["labels"], json!({ "os": "linux" }));
+        assert!(value["files"][0].get("role").is_none());
+        assert_eq!(value["append"], true);
+    }
+
+    #[test]
+    fn publish_init_response_parses_and_hides_urls_in_debug() {
         let response: PublishInitResponse = serde_json::from_value(json!({
             "uploadId": "01JBX9T6Q4ZK3M8N2P5R7S9V0W",
-            "putUrl": "https://r2.example/_staging/x?X-Amz-Signature=secret",
             "expires": "2026-10-28T10:22:00Z",
-            "headers": { "content-length": "48213", "x-amz-checksum-sha256": "nyx=" }
+            "uploads": [{
+                "name": "sdk-2.3.1.tgz",
+                "putUrl": "https://r2.example/_staging/x?X-Amz-Signature=secret",
+                "headers": { "content-length": "48213", "x-amz-checksum-sha256": "nyx=" }
+            }]
         }))
         .unwrap();
         assert_eq!(response.upload_id, "01JBX9T6Q4ZK3M8N2P5R7S9V0W");
-        assert_eq!(response.headers["content-length"], "48213");
+        assert_eq!(response.uploads[0].headers["content-length"], "48213");
         assert_eq!(
             response.expires_at().unwrap().unix_timestamp(),
             1_793_182_920
         );
         assert!(!format!("{response:?}").contains("secret"));
+    }
+
+    #[test]
+    fn commit_response_lists_files() {
+        let response: PublishCommitResponse = serde_json::from_value(json!({
+            "eco": "npm", "name": "@acme/sdk", "version": "2.3.1",
+            "url": "https://packages.example.com/npm/@acme/sdk/-/sdk-2.3.1.tgz",
+            "files": [{ "name": "sdk-2.3.1.tgz", "url": "https://packages.example.com/npm/@acme/sdk/-/sdk-2.3.1.tgz" }]
+        }))
+        .unwrap();
+        assert_eq!(response.files[0].name, "sdk-2.3.1.tgz");
     }
 
     #[test]
@@ -721,11 +820,13 @@ mod tests {
     fn yank_response_flattens_version_fields() {
         let response: YankResponse = serde_json::from_value(json!({
             "eco": "npm", "name": "@acme/sdk", "version": "2.3.1",
-            "published": "2026-10-28T10:12:00Z", "yanked": true, "size": 48213, "sha256": "9f2c"
+            "published": "2026-10-28T10:12:00Z", "yanked": true,
+            "files": [{ "name": "sdk-2.3.1.tgz", "size": 48213, "sha256": "9f2c", "role": "archive" }]
         }))
         .unwrap();
         assert!(response.version.yanked);
         assert_eq!(response.version.version, "2.3.1");
+        assert_eq!(response.version.files[0].role.as_deref(), Some("archive"));
     }
 
     #[test]
