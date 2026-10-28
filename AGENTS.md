@@ -78,7 +78,8 @@ Before every commit run fmt, clippy and the tests. A commit must leave the tree 
   `maven`, `action`, `dist`, `deps`, `ci`, `docs`.
 - Make small, focused commits. One logical change per commit; a feature plus its tests is
   one commit, two unrelated features are two commits.
-- **Never** add `Co-Authored-By` trailers. The `commit-msg` hook rejects them.
+- **Never** add `Co-Authored-By` or `Claude-Session` trailers, or any other trailer. The
+  `commit-msg` hook rejects both.
 - Enable the hooks once per clone:
 
   ```
