@@ -25,6 +25,15 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// An external program (`git`, `npm`, `cargo`, `dotnet`) ran and failed.
+    #[error("`{command}` failed: {message}")]
+    Command {
+        /// The command line, without secrets.
+        command: String,
+        /// What the program reported on standard error, or its exit status.
+        message: String,
+    },
+
     /// A JSON document could not be serialized or deserialized.
     #[error("invalid JSON: {0}")]
     Json(#[from] serde_json::Error),

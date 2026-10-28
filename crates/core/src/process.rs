@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// What a finished program produced.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -49,6 +49,27 @@ impl CommandOutput {
     /// Standard error as text, without surrounding whitespace.
     pub fn stderr_text(&self) -> String {
         String::from_utf8_lossy(&self.stderr).trim().to_owned()
+    }
+
+    /// `self` when the program succeeded, otherwise an [`Error::Command`] naming
+    /// `command` and carrying the program's standard error (or its exit status).
+    pub fn into_success(self, command: &str) -> Result<Self> {
+        if self.is_success() {
+            return Ok(self);
+        }
+        let stderr = self.stderr_text();
+        let message = if !stderr.is_empty() {
+            stderr
+        } else {
+            match self.code {
+                Some(code) => format!("exit code {code}"),
+                None => "terminated by a signal".to_owned(),
+            }
+        };
+        Err(Error::Command {
+            command: command.to_owned(),
+            message,
+        })
     }
 }
 
@@ -127,5 +148,21 @@ mod tests {
         assert!(!failed.is_success());
         assert_eq!(failed.stderr_text(), "fatal: no tag");
         assert!(!CommandOutput::default().is_success());
+    }
+
+    #[test]
+    fn failures_become_command_errors() {
+        assert!(CommandOutput::success("x").into_success("git x").is_ok());
+        let err = CommandOutput::failure(128, "fatal: bad revision\n")
+            .into_success("git archive HEAD")
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "`git archive HEAD` failed: fatal: bad revision"
+        );
+        let err = CommandOutput::failure(2, "")
+            .into_success("npm pack")
+            .unwrap_err();
+        assert_eq!(err.to_string(), "`npm pack` failed: exit code 2");
     }
 }
