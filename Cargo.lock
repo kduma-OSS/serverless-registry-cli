@@ -1101,14 +1101,23 @@ dependencies = [
 [[package]]
 name = "sreg-eco-cargo"
 version = "0.1.0"
+dependencies = [
+ "sreg-core",
+]
 
 [[package]]
 name = "sreg-eco-composer"
 version = "0.1.0"
+dependencies = [
+ "sreg-core",
+]
 
 [[package]]
 name = "sreg-eco-npm"
 version = "0.1.0"
+dependencies = [
+ "sreg-core",
+]
 
 [[package]]
 name = "stable_deref_trait"
