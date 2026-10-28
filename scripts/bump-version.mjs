@@ -396,11 +396,9 @@ export function versionFileChanges(root, version) {
   const read = (file) => readFileSync(path.join(root, file), "utf8");
   const cargoToml = read("Cargo.toml");
   const cargoLock = read("Cargo.lock");
-  const action = read("action/VERSION");
   return {
     "Cargo.toml": [cargoToml, updateCargoToml(cargoToml, version)],
     "Cargo.lock": [cargoLock, updateCargoLock(cargoLock, version)],
-    "action/VERSION": [action, `v${version}\n`],
   };
 }
 

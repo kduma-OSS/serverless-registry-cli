@@ -1,7 +1,7 @@
 // Unit tests of scripts/bump-version.mjs: node --test scripts/
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -358,7 +358,6 @@ describe("describeChange", () => {
 describe("run", () => {
   function fixture() {
     const root = mkdtempSync(path.join(tmpdir(), "bump-version-"));
-    mkdirSync(path.join(root, "action"));
     writeFileSync(
       path.join(root, "Cargo.toml"),
       '[workspace.package]\nversion = "1.2.0-beta.3"\n\n[workspace.dependencies]\nx = { path = "x", version = "1.2.0-beta.3" }\n',
@@ -367,7 +366,6 @@ describe("run", () => {
       path.join(root, "Cargo.lock"),
       '[[package]]\nname = "x"\nversion = "1.2.0-beta.3"\n',
     );
-    writeFileSync(path.join(root, "action", "VERSION"), "v1.2.0-beta.3\n");
     writeFileSync(
       path.join(root, "CHANGELOG.md"),
       `## [Unreleased]\n\n### Fixed\n\n- Fix.\n\n[Unreleased]: ${BASE}/compare/v1.2.0-beta.3...HEAD\n`,
@@ -411,7 +409,6 @@ describe("run", () => {
       assert.equal(readCargoVersion(read("Cargo.toml")), "1.2.0");
       assert.match(read("Cargo.toml"), /x = \{ path = "x", version = "1\.2\.0" \}/);
       assert.match(read("Cargo.lock"), /version = "1\.2\.0"\n$/);
-      assert.equal(read("action/VERSION"), "v1.2.0\n");
       assert.match(
         read("CHANGELOG.md"),
         /## \[Unreleased\]\n\n## \[1\.2\.0\] - 2026-10-28\n\n### Fixed\n\n- Fix\.\n/,
