@@ -6,7 +6,8 @@ credentials file (`--write <file>`) or prints what puts it in place: one line fo
 environment, a `dotnet nuget add source` command (NuGet), a `swift package-registry login`
 command (Swift), or `settings.xml` and Gradle snippets (Maven).
 
-Generic packages have no package manager: `sreg generic get` uses `--token` /
+Generic packages have no package manager:
+`sreg generic get <name> [<version>|<constraint>|latest]` uses `--token` /
 `REGISTRY_TOKEN` (or `--oidc [--oidc-project <PROJECT>]`) directly. The publish commands take
 the same `--oidc [--oidc-project <PROJECT>]` pair; only `sreg auth` calls it `--project`.
 

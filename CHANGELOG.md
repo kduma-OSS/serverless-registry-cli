@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--oidc` still wins; an explicit `--token`/`REGISTRY_TOKEN` that differs from the URL's
   credentials is an error. `sreg auth` writes the URL's credentials, and the GitHub
   Action skips OIDC when `registry` carries them.
+- `sreg generic get <name> <constraint>`: a version that is not an exact semver version
+  (`^1.2`, `">=1 <2"`, `1.x`) is a constraint resolved by the registry
+  (`GET /generic/<name>/latest?version=<constraint>`, with `--prerelease` and the label
+  filters); the resolved version is printed on stderr and `--json` prints the feed
+  document.
 
 ## [0.1.0] - 2026-10-28
 

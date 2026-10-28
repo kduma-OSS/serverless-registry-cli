@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{bail, Context};
 use sreg_core::download::Downloader;
 use sreg_core::publish::PublishOptions;
-use sreg_core::{PackageOptions, Packager};
+use sreg_core::{GenericQuery, PackageOptions, Packager};
 use sreg_eco_generic::{
     parse_key_value, parse_spec, validate_label, validate_name, validate_version, GenericFileSpec,
     GenericPackager,
@@ -91,24 +91,79 @@ pub async fn publish(
     .await
 }
 
-pub async fn get(global: &GlobalArgs, out: &Output, args: &GenericGetArgs) -> anyhow::Result<()> {
-    validate_name(&args.name)?;
-    let latest = args.version == "latest";
-    if !latest {
-        validate_version(&args.version)?;
-        if args.prerelease {
-            bail!("--prerelease only applies to `latest`");
+/// The `<version>` argument of `sreg generic get`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Requested<'a> {
+    /// `latest`.
+    Latest,
+    /// An exact semver version.
+    Exact(&'a str),
+    /// A semver range the registry resolves, e.g. `^1.2`, `>=1 <2` or `1.x`.
+    Constraint(&'a str),
+}
+
+impl<'a> Requested<'a> {
+    fn parse(version: &'a str) -> anyhow::Result<Self> {
+        if version == "latest" {
+            return Ok(Requested::Latest);
+        }
+        if semver::Version::parse(version).is_ok() {
+            // Rejects build metadata, which published versions never carry.
+            validate_version(version)?;
+            return Ok(Requested::Exact(version));
+        }
+        let constraint = version.trim();
+        if constraint.is_empty() || constraint.len() > 256 || version.chars().any(char::is_control)
+        {
+            bail!("invalid version `{version}`: expected a version, a constraint such as ^1.2, or `latest`");
+        }
+        Ok(Requested::Constraint(constraint))
+    }
+
+    /// The `<version>` path segment of the feed request.
+    fn segment(self) -> &'a str {
+        match self {
+            Requested::Exact(version) => version,
+            Requested::Latest | Requested::Constraint(_) => "latest",
         }
     }
+
+    /// The `version=` query parameter of the feed request.
+    fn constraint(self) -> Option<&'a str> {
+        match self {
+            Requested::Constraint(constraint) => Some(constraint),
+            Requested::Latest | Requested::Exact(_) => None,
+        }
+    }
+}
+
+pub async fn get(global: &GlobalArgs, out: &Output, args: &GenericGetArgs) -> anyhow::Result<()> {
+    validate_name(&args.name)?;
+    let requested = Requested::parse(&args.version)?;
+    if matches!(requested, Requested::Exact(_)) && args.prerelease {
+        bail!("--prerelease only applies to `latest` and version constraints");
+    }
     let labels = parse_labels(&args.labels)?;
+    let query = GenericQuery {
+        labels: &labels,
+        prerelease: args.prerelease,
+        constraint: requested.constraint(),
+    };
 
     let client = context::client_with(global, args.oidc.oidc, args.oidc.project.as_deref()).await?;
     let version = client
-        .generic_version(&args.name, &args.version, &labels, args.prerelease)
+        .generic_version(&args.name, requested.segment(), &query)
         .await?;
 
     if out.is_json() {
         return out.json(&version);
+    }
+    if !matches!(requested, Requested::Exact(_)) {
+        // On stderr: stdout lists only the downloaded files.
+        eprintln!(
+            "Resolved {} {} to {}",
+            version.name, args.version, version.version
+        );
     }
     if version.yanked {
         eprintln!("warning: {} {} is yanked", version.name, version.version);
@@ -150,6 +205,27 @@ fn parse_labels(values: &[String]) -> anyhow::Result<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versions_that_are_not_exact_are_constraints() {
+        assert_eq!(Requested::parse("latest").unwrap(), Requested::Latest);
+        assert_eq!(
+            Requested::parse("1.2.3-rc.1").unwrap(),
+            Requested::Exact("1.2.3-rc.1")
+        );
+        for constraint in ["^1.2", ">=1 <2", "1.x", "~1.2.3", "1", "v1.2.3"] {
+            assert_eq!(
+                Requested::parse(constraint).unwrap(),
+                Requested::Constraint(constraint),
+                "{constraint}"
+            );
+        }
+        assert!(Requested::parse("1.2.3+build").is_err());
+        assert!(Requested::parse(" ").is_err());
+        assert!(Requested::parse("1.x\n").is_err());
+        assert_eq!(Requested::parse("^1.2").unwrap().segment(), "latest");
+        assert_eq!(Requested::parse("1.0.0").unwrap().segment(), "1.0.0");
+    }
 
     #[test]
     fn labels_are_parsed_once_per_key() {

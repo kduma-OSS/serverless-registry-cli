@@ -48,6 +48,39 @@ const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(10);
 /// Longest wait honoured for `Retry-After`.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
+/// Filters of a generic feed request (`docs/api.md`, 8.1).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GenericQuery<'a> {
+    /// `label=<key>:<value>` per label: only files carrying every label.
+    pub labels: &'a [(String, String)],
+    /// `channel=prerelease`: `latest` considers prerelease versions too.
+    pub prerelease: bool,
+    /// `version=<constraint>`: `latest` is the highest version satisfying this semver
+    /// range (npm syntax, e.g. `^1.2`, `>=1 <2`, `1.x`).
+    pub constraint: Option<&'a str>,
+}
+
+impl GenericQuery<'_> {
+    /// Appends the query parameters to `url`, leaving it without `?` when there are none.
+    pub fn apply(&self, url: &mut Url) {
+        {
+            let mut query = url.query_pairs_mut();
+            for (key, value) in self.labels {
+                query.append_pair("label", &format!("{key}:{value}"));
+            }
+            if let Some(constraint) = self.constraint {
+                query.append_pair("version", constraint);
+            }
+            if self.prerelease {
+                query.append_pair("channel", "prerelease");
+            }
+        }
+        if url.query() == Some("") {
+            url.set_query(None);
+        }
+    }
+}
+
 /// Client of the registry API.
 #[derive(Clone)]
 pub struct Client {
@@ -167,28 +200,16 @@ impl Client {
     /// generic package from the generic feed.
     ///
     /// The package name is one path segment, so the `/` of a grouped name is sent as
-    /// `%2F` (`/generic/acme%2Fplugin-foo/latest`). Every label becomes a
-    /// `label=<key>:<value>` query parameter; `prerelease` adds `channel=prerelease`.
+    /// `%2F` (`/generic/acme%2Fplugin-foo/latest`). `query` adds the filters; with
+    /// `latest` and a constraint, the registry resolves the highest version satisfying it.
     pub async fn generic_version(
         &self,
         name: &str,
         version: &str,
-        labels: &[(String, String)],
-        prerelease: bool,
+        query: &GenericQuery<'_>,
     ) -> Result<GenericFeedVersion> {
         let mut url = self.url(&["generic", name, version])?;
-        {
-            let mut query = url.query_pairs_mut();
-            for (key, value) in labels {
-                query.append_pair("label", &format!("{key}:{value}"));
-            }
-            if prerelease {
-                query.append_pair("channel", "prerelease");
-            }
-        }
-        if url.query() == Some("") {
-            url.set_query(None);
-        }
+        query.apply(&mut url);
         self.send_to(Method::GET, url, None, self.retry, None).await
     }
 

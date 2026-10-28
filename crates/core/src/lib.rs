@@ -23,7 +23,7 @@ pub mod upload;
 #[cfg(test)]
 mod test_env;
 
-pub use client::Client;
+pub use client::{Client, GenericQuery};
 pub use error::{Error, Result};
 pub use packager::{Ecosystem, Package, PackageFile, PackageOptions, Packager, Workdir};
 pub use process::{CommandOutput, CommandRunner, SystemRunner};

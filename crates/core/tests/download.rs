@@ -7,7 +7,7 @@ use serde_json::json;
 use sreg_core::download::Downloader;
 use sreg_core::models::GenericFeedFile;
 use sreg_core::retry::RetryPolicy;
-use sreg_core::{Client, Error};
+use sreg_core::{Client, Error, GenericQuery};
 use url::Url;
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -100,13 +100,58 @@ async fn feed_request_carries_labels_and_channel() {
         ("arch".to_owned(), "x86_64".to_owned()),
     ];
     let version = client(&server)
-        .generic_version("tools/cli", "latest", &labels, true)
+        .generic_version(
+            "tools/cli",
+            "latest",
+            &GenericQuery {
+                labels: &labels,
+                prerelease: true,
+                ..GenericQuery::default()
+            },
+        )
         .await
         .unwrap();
 
     assert_eq!(version.version, "1.1.0-rc.1");
     assert_eq!(version.meta["channel"], "beta");
     assert_eq!(version.files[0].labels["arch"], "x86_64");
+}
+
+#[tokio::test]
+async fn feed_request_carries_the_version_constraint() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/latest"))
+        .and(query_param("version", ">=1 <2"))
+        .and(query_param("label", "os:linux"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "name": "tools/cli", "version": "1.4.0", "published": "2026-10-28T10:12:00Z",
+            "yanked": false, "meta": {}, "files": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let labels = vec![("os".to_owned(), "linux".to_owned())];
+    let version = client(&server)
+        .generic_version(
+            "tools/cli",
+            "latest",
+            &GenericQuery {
+                labels: &labels,
+                constraint: Some(">=1 <2"),
+                ..GenericQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(version.version, "1.4.0");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests[0].url.query(),
+        Some("label=os%3Alinux&version=%3E%3D1+%3C2")
+    );
 }
 
 #[tokio::test]
@@ -122,7 +167,7 @@ async fn feed_errors_are_mapped() {
         .await;
 
     let err = client(&server)
-        .generic_version("cli", "9.9.9", &[], false)
+        .generic_version("cli", "9.9.9", &GenericQuery::default())
         .await
         .unwrap_err();
 

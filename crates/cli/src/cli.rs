@@ -443,7 +443,8 @@ pub struct GenericGetArgs {
     /// Package name: [<group>/]<name>
     pub name: String,
 
-    /// Version to download, or `latest`
+    /// Version to download: an exact version, a constraint resolved by the registry
+    /// (e.g. ^1.2, ">=1 <2", 1.x) or `latest`
     #[arg(
         id = "package_version",
         value_name = "VERSION",
@@ -459,7 +460,7 @@ pub struct GenericGetArgs {
     #[arg(long, value_name = "DIR", default_value = ".")]
     pub out: PathBuf,
 
-    /// With `latest`: consider prerelease versions too
+    /// With `latest` or a constraint: consider prerelease versions too
     #[arg(long)]
     pub prerelease: bool,
 

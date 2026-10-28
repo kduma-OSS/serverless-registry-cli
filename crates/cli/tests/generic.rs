@@ -506,3 +506,109 @@ async fn get_rejects_prerelease_with_an_explicit_version() {
     .code(1)
     .stderr(predicate::str::contains("--prerelease"));
 }
+
+/// A registry resolving `^1.2` (with prereleases) to `1.4.0-rc.1`, and its storage.
+async fn constraint_server() -> (MockServer, MockServer) {
+    let registry = MockServer::start().await;
+    let storage = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/latest"))
+        .and(query_param("version", "^1.2"))
+        .and(query_param("channel", "prerelease"))
+        .and(query_param("label", "os:linux"))
+        .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+        .respond_with(json(
+            200,
+            json!({
+                "name": "tools/cli", "version": "1.4.0-rc.1", "published": "2026-10-28T10:12:00Z",
+                "yanked": false, "meta": {},
+                "files": [{
+                    "name": "cli-linux.tar.gz", "size": 5, "sha256": HELLO_SHA256,
+                    "labels": { "os": "linux" },
+                    "url": format!("{}/generic/tools%2Fcli/1.4.0-rc.1/cli-linux.tar.gz", registry.uri())
+                }]
+            }),
+        ))
+        .expect(1)
+        .mount(&registry)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/generic/tools%2Fcli/1.4.0-rc.1/cli-linux.tar.gz"))
+        .respond_with(
+            ResponseTemplate::new(302).insert_header(
+                "location",
+                format!(
+                    "{}/bucket/cli-linux.tar.gz?X-Amz-Signature=s",
+                    storage.uri()
+                )
+                .as_str(),
+            ),
+        )
+        .mount(&registry)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/bucket/cli-linux.tar.gz"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(&b"hello"[..]))
+        .mount(&storage)
+        .await;
+    (registry, storage)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_resolves_a_version_constraint() {
+    let (registry, _storage) = constraint_server().await;
+    let dir = tempfile::tempdir().unwrap();
+
+    sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "^1.2",
+            "--prerelease",
+            "--label",
+            "os=linux",
+            "--out",
+            dir.path().to_str().unwrap(),
+        ],
+    )
+    .await
+    .success()
+    .stdout(predicate::str::contains("cli-linux.tar.gz"))
+    .stdout(predicate::str::contains("1.4.0-rc.1").not())
+    .stderr(predicate::str::contains(
+        "Resolved tools/cli ^1.2 to 1.4.0-rc.1",
+    ));
+
+    assert_eq!(
+        std::fs::read(dir.path().join("cli-linux.tar.gz")).unwrap(),
+        b"hello"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_json_prints_the_resolved_feed_document() {
+    let (registry, storage) = constraint_server().await;
+
+    let assert = sreg(
+        &registry,
+        &[
+            "generic",
+            "get",
+            "tools/cli",
+            "^1.2",
+            "--prerelease",
+            "--label",
+            "os=linux",
+            "--json",
+        ],
+    )
+    .await
+    .success();
+
+    let body = stdout_json(&assert);
+    assert_eq!(body["version"], "1.4.0-rc.1");
+    assert_eq!(body["files"][0]["name"], "cli-linux.tar.gz");
+    assert!(storage.received_requests().await.unwrap().is_empty());
+}
