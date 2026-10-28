@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: `docs/spec.md` and `docs/api.md` synced with the registry (the scope of an
+  existing secret can be edited with `PATCH …/secrets/<id>`).
+
 ## [0.2.0] - 2026-10-28
 
 ### Added
