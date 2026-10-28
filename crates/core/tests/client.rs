@@ -207,6 +207,30 @@ async fn version_exists_conflict_maps_to_its_own_error() {
 }
 
 #[tokio::test]
+async fn file_exists_conflict_maps_to_its_own_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/publish/init"))
+        .respond_with(error(409, "file_exists", "cli-linux.tar.gz already exists"))
+        .mount(&server)
+        .await;
+
+    let request: sreg_core::models::PublishInitRequest = serde_json::from_value(json!({
+        "eco": "generic", "name": "cli", "version": "1.0.0", "files": [], "manifest": {}
+    }))
+    .unwrap();
+    let err = client(&server, Some(TOKEN))
+        .publish_init(&request)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, Error::FileExists { ref message } if message.contains("cli-linux")),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
 async fn other_conflicts_stay_api_errors() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

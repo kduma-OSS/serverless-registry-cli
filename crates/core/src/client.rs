@@ -3,8 +3,8 @@
 //! Every request carries `User-Agent: sreg/<version>`, `X-Client-Version`,
 //! `Accept: application/json` and, when a token is configured,
 //! `Authorization: Bearer <token>`. Error responses are mapped to [`Error`]:
-//! `426` to [`Error::ClientTooOld`], `409 version_exists` to [`Error::VersionExists`] and
-//! everything else to [`Error::Api`].
+//! `426` to [`Error::ClientTooOld`], `409 version_exists` to [`Error::VersionExists`],
+//! `409 file_exists` to [`Error::FileExists`] and everything else to [`Error::Api`].
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -529,6 +529,9 @@ pub fn error_from_response(
 
     if status == StatusCode::CONFLICT && code == "version_exists" {
         return Error::VersionExists;
+    }
+    if status == StatusCode::CONFLICT && code == "file_exists" {
+        return Error::FileExists { message };
     }
 
     Error::Api {

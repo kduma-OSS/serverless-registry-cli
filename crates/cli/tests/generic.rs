@@ -209,6 +209,30 @@ async fn existing_version_exits_with_two() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn existing_file_exits_with_two() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (linux, _) = files(dir.path());
+    Mock::given(method("POST"))
+        .and(path("/api/v1/publish/init"))
+        .respond_with(error(
+            409,
+            "file_exists",
+            "cli-linux.tar.gz already exists in 1.0.0",
+        ))
+        .mount(&server)
+        .await;
+
+    sreg(
+        &server,
+        &["generic", "publish", "tools/cli", "1.0.0", &linux],
+    )
+    .await
+    .code(2)
+    .stderr(predicate::str::contains("cli-linux.tar.gz already exists"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn client_too_old_on_publish_exits_with_three() {
     let server = MockServer::start().await;
     let dir = tempfile::tempdir().unwrap();

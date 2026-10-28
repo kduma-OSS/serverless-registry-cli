@@ -73,4 +73,12 @@ pub enum Error {
     /// The version being published already exists in the registry (`409`).
     #[error("this version already exists in the registry")]
     VersionExists,
+
+    /// A file being appended already exists in the published version
+    /// (`409 file_exists`).
+    #[error("a file with this name already exists in the published version: {message}")]
+    FileExists {
+        /// Human-readable message from the registry.
+        message: String,
+    },
 }

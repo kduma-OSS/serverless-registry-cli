@@ -11,7 +11,8 @@ pub const SUCCESS: u8 = 0;
 /// Generic error: invalid usage, network failure, rejected request and so on.
 pub const FAILURE: u8 = 1;
 
-/// The version being published already exists in the registry (HTTP `409`).
+/// The version (or, when appending, one of its files) is already published
+/// (HTTP `409 version_exists` or `409 file_exists`).
 pub const VERSION_EXISTS: u8 = 2;
 
 /// This client is older than the minimum version the registry accepts.
@@ -34,6 +35,9 @@ pub fn hint_for(err: &anyhow::Error) -> Option<String> {
         Some(Error::VersionExists) => {
             Some("published versions are immutable; bump the version to publish again".into())
         }
+        Some(Error::FileExists { .. }) => {
+            Some("published files are immutable; use another file name or a new version".into())
+        }
         _ => None,
     }
 }
@@ -41,7 +45,7 @@ pub fn hint_for(err: &anyhow::Error) -> Option<String> {
 /// Maps an error to the exit code the process should terminate with.
 pub fn code_for(err: &anyhow::Error) -> u8 {
     match core_error(err) {
-        Some(Error::VersionExists) => VERSION_EXISTS,
+        Some(Error::VersionExists | Error::FileExists { .. }) => VERSION_EXISTS,
         Some(Error::ClientTooOld { .. }) => CLIENT_TOO_OLD,
         _ => FAILURE,
     }
@@ -56,6 +60,14 @@ mod tests {
     #[test]
     fn version_exists_maps_to_its_own_code() {
         let err = anyhow::Error::new(Error::VersionExists);
+        assert_eq!(code_for(&err), VERSION_EXISTS);
+    }
+
+    #[test]
+    fn file_exists_maps_to_the_version_exists_code() {
+        let err = anyhow::Error::new(Error::FileExists {
+            message: "x".into(),
+        });
         assert_eq!(code_for(&err), VERSION_EXISTS);
     }
 
