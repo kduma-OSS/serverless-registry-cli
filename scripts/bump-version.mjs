@@ -268,11 +268,26 @@ export function mergeSections(baseLines, extraLines) {
  * error unless `allowEmpty` is set.
  */
 export function rollChangelog(text, version, date, { allowEmpty = false } = {}) {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  let lines = text.replace(/\r\n/g, "\n").split("\n");
   const unreleased = findSection(lines, "Unreleased");
   if (unreleased === -1) throw new BumpError("CHANGELOG.md has no ## [Unreleased] section");
-  const unreleasedEnd = sectionEnd(lines, unreleased);
-  const entries = trimBlank(lines.slice(unreleased + 1, unreleasedEnd));
+  let unreleasedEnd = sectionEnd(lines, unreleased);
+  let entries = trimBlank(lines.slice(unreleased + 1, unreleasedEnd));
+  // A stable release absorbs the sections of its own prereleases: their entries are merged
+  // into the new section (oldest prerelease first, then the Unreleased entries), their
+  // sections and links disappear, and the compare link starts where the first prerelease did.
+  let previousStable = null;
+  if (!version.includes("-")) {
+    const folded = foldPrereleases(lines, version);
+    if (folded.sections.length > 0) {
+      lines = folded.lines;
+      unreleasedEnd = sectionEnd(lines, unreleased);
+      let merged = [];
+      for (const body of folded.sections) merged = mergeSections(merged, body);
+      entries = mergeSections(merged, entries);
+      previousStable = folded.previous;
+    }
+  }
   const existing = findSection(lines, version);
   if (existing !== -1 && existing < unreleased) {
     throw new BumpError(`the ## [${version}] section must come after ## [Unreleased]`);
@@ -308,20 +323,49 @@ export function rollChangelog(text, version, date, { allowEmpty = false } = {}) 
       ...lines.slice(existingEnd),
     ];
   }
-  out = updateLinks(out, version);
+  out = updateLinks(out, version, previousStable);
 
   const start = findSection(out, version);
   const notes = trimBlank(out.slice(start + 1, sectionEnd(out, start))).join("\n");
   return { text: out.join("\n"), notes };
 }
 
-function updateLinks(lines, version) {
+/**
+ * Removes the sections of the prereleases of `version` (`## [<version>-<pre>] - <date>`) and
+ * their link lines. Returns the remaining lines, the bodies of the removed sections (oldest
+ * first) and the tag the oldest of them was compared against, for the new compare link.
+ */
+function foldPrereleases(lines, version) {
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const heading = new RegExp(`^## \\[${escaped}-[0-9A-Za-z.-]+\\]`);
+  const link = new RegExp(`^\\[${escaped}-[0-9A-Za-z.-]+\\]:\\s*\\S+/compare/(\\S+)\\.\\.\\.\\S+\\s*$`);
+  const sections = [];
+  let previous = null;
+  let out = [...lines];
+  for (;;) {
+    const start = out.findIndex((line) => heading.test(line));
+    if (start === -1) break;
+    const end = sectionEnd(out, start);
+    sections.unshift(trimBlank(out.slice(start + 1, end)));
+    out = [...out.slice(0, start), ...out.slice(end)];
+  }
+  const kept = [];
+  for (const line of out) {
+    const match = link.exec(line);
+    if (match === null) kept.push(line);
+    else previous = match[1];
+  }
+  return { lines: kept, sections, previous };
+}
+
+function updateLinks(lines, version, previousStable = null) {
   const tag = `v${version}`;
   const index = lines.findIndex((line) => /^\[Unreleased\]:\s*\S/i.test(line));
   if (index === -1) return lines;
   const match = /^\[Unreleased\]:\s*(\S+)\/compare\/(\S+)\.\.\.HEAD\s*$/i.exec(lines[index]);
   if (match === null) return lines;
-  const [, base, previous] = match;
+  const base = match[1];
+  const previous = previousStable ?? match[2];
   if (previous === tag) return lines;
   const out = [...lines];
   out[index] = `[Unreleased]: ${base}/compare/${tag}...HEAD`;

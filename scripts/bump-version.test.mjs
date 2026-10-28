@@ -260,6 +260,47 @@ Intro text.
     assert.equal(notes, "### Added\n\n- Thing.");
   });
 
+  it("folds the prerelease sections into the stable release", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "",
+      "- A late fix.",
+      "",
+      "## [1.1.0-beta.2] - 2026-10-27",
+      "",
+      "### Added",
+      "",
+      "- Second feature.",
+      "",
+      "## [1.1.0-beta.1] - 2026-10-26",
+      "",
+      "### Added",
+      "",
+      "- First feature.",
+      "",
+      "## [1.0.0] - 2026-10-01",
+      "",
+      "### Added",
+      "",
+      "- Everything.",
+      "",
+      "[Unreleased]: https://example.test/compare/v1.1.0-beta.2...HEAD",
+      "[1.1.0-beta.2]: https://example.test/compare/v1.1.0-beta.1...v1.1.0-beta.2",
+      "[1.1.0-beta.1]: https://example.test/compare/v1.0.0...v1.1.0-beta.1",
+      "[1.0.0]: https://example.test/releases/tag/v1.0.0",
+      "",
+    ].join("\n");
+    const { text: out, notes } = rollChangelog(text, "1.1.0", "2026-10-28");
+    assert.doesNotMatch(out, /beta/);
+    assert.match(out, /## \[Unreleased\]\n\n## \[1\.1\.0\] - 2026-10-28\n/);
+    assert.match(notes, /### Added\n\n- First feature\.\n- Second feature\.\n\n### Fixed\n\n- A late fix\./);
+    assert.match(out, /\[Unreleased\]: https:\/\/example\.test\/compare\/v1\.1\.0\.\.\.HEAD\n\[1\.1\.0\]: https:\/\/example\.test\/compare\/v1\.0\.0\.\.\.v1\.1\.0\n\[1\.0\.0\]/);
+  });
+
   it("refuses to release nothing", () => {
     const text = `## [Unreleased]
 
