@@ -6,7 +6,9 @@ mod common;
 use common::{error, json, sreg, sreg_with, stdout_json, TOKEN};
 use predicates::prelude::*;
 use serde_json::{json, Value};
-use wiremock::matchers::{header, method, path};
+#[cfg(feature = "generic")]
+use wiremock::matchers::header;
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer};
 
 const ISSUED: &str =
