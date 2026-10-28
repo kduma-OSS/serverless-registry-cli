@@ -67,18 +67,6 @@ pub enum Command {
     /// Show the identity and grants of the current token
     Whoami,
 
-    /// Manage credentials (requires an admin token)
-    Token {
-        #[command(subcommand)]
-        command: TokenCommand,
-    },
-
-    /// Yank a version so it is no longer offered for new installs (admin)
-    Yank(VersionArgs),
-
-    /// Delete a version, or with --all a whole package, from the registry (admin)
-    Delete(DeleteArgs),
-
     /// Write registry credentials for a package manager or print them for export
     Auth(AuthArgs),
 
@@ -100,14 +88,6 @@ impl Command {
                 command: CargoCommand::Publish(_),
             } => "cargo publish",
             Command::Whoami => "whoami",
-            Command::Token { command } => match command {
-                TokenCommand::Create(_) => "token create",
-                TokenCommand::Rotate(_) => "token rotate",
-                TokenCommand::List => "token list",
-                TokenCommand::Revoke(_) => "token revoke",
-            },
-            Command::Yank(_) => "yank",
-            Command::Delete(_) => "delete",
             Command::Auth(_) => "auth",
             Command::Version => "version",
         }
@@ -180,114 +160,6 @@ pub struct CargoPublishArgs {
     /// Extra arguments passed to `cargo package`
     #[arg(last = true, value_name = "CARGO_ARGS")]
     pub cargo_args: Vec<String>,
-}
-
-#[derive(Subcommand)]
-pub enum TokenCommand {
-    /// Create a credential and print its token once
-    Create(TokenCreateArgs),
-
-    /// Issue a new secret for a credential and let the old one expire
-    Rotate(TokenRotateArgs),
-
-    /// List credentials
-    List,
-
-    /// Revoke a credential
-    Revoke(TokenRevokeArgs),
-}
-
-#[derive(Args)]
-pub struct TokenCreateArgs {
-    #[command(flatten)]
-    pub project: ProjectArgs,
-
-    /// Role of the credential
-    #[arg(long, value_enum)]
-    pub kind: CredentialKind,
-
-    /// Grant in the form <ECO>:<PACKAGE>[:<VERSIONS>], e.g. composer:acme/*:* (repeatable;
-    /// VERSIONS defaults to *)
-    #[arg(long = "grant", value_name = "GRANT")]
-    pub grants: Vec<String>,
-
-    /// Expiry of the first secret (RFC 3339 timestamp or YYYY-MM-DD); never by default
-    #[arg(long, value_name = "DATE")]
-    pub expires: Option<String>,
-}
-
-#[derive(Args)]
-pub struct TokenRotateArgs {
-    #[command(flatten)]
-    pub project: ProjectArgs,
-
-    /// Let the previously active key secrets expire after this period
-    /// (<N>s, <N>m, <N>h, <N>d or <N>w)
-    #[arg(long, value_name = "DURATION", default_value = "14d")]
-    pub expire_old: String,
-}
-
-#[derive(Args)]
-pub struct TokenRevokeArgs {
-    #[command(flatten)]
-    pub project: ProjectArgs,
-
-    /// Do not ask for confirmation
-    #[arg(long, short = 'y')]
-    pub yes: bool,
-}
-
-#[derive(Args)]
-pub struct ProjectArgs {
-    /// Project (credential) name
-    #[arg(long = "project", value_name = "PROJECT")]
-    pub name: String,
-}
-
-/// Role of a credential.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum CredentialKind {
-    /// Install packages (consumers)
-    Read,
-    /// Publish packages (package CI)
-    Publish,
-    /// Administer the registry
-    Admin,
-}
-
-#[derive(Args)]
-pub struct VersionArgs {
-    /// Ecosystem of the package
-    #[arg(value_enum)]
-    pub eco: EcosystemArg,
-
-    /// Package name
-    pub name: String,
-
-    /// Version
-    pub version: String,
-}
-
-#[derive(Args)]
-pub struct DeleteArgs {
-    /// Ecosystem of the package
-    #[arg(value_enum)]
-    pub eco: EcosystemArg,
-
-    /// Package name
-    pub name: String,
-
-    /// Version to delete
-    #[arg(required_unless_present = "all", conflicts_with = "all")]
-    pub version: Option<String>,
-
-    /// Delete the whole package with every version
-    #[arg(long)]
-    pub all: bool,
-
-    /// Do not ask for confirmation
-    #[arg(long, short = 'y')]
-    pub yes: bool,
 }
 
 #[derive(Args)]
@@ -388,71 +260,6 @@ mod tests {
             cli.global.registry.map(String::from).as_deref(),
             Some("https://packages.example.com/")
         );
-    }
-
-    #[test]
-    fn yank_parses_positional_arguments() {
-        let cli = Cli::try_parse_from(["sreg", "yank", "npm", "@acme/sdk", "2.3.1"]).unwrap();
-        let Command::Yank(args) = cli.command else {
-            panic!("expected yank");
-        };
-        assert_eq!(Ecosystem::from(args.eco), Ecosystem::Npm);
-        assert_eq!(args.name, "@acme/sdk");
-        assert_eq!(args.version, "2.3.1");
-    }
-
-    #[test]
-    fn token_create_collects_grants() {
-        let cli = Cli::try_parse_from([
-            "sreg",
-            "token",
-            "create",
-            "--project",
-            "shop-frontend",
-            "--kind",
-            "read",
-            "--grant",
-            "composer:acme/*:*",
-            "--grant",
-            "npm:@acme/sdk:^2.0",
-        ])
-        .unwrap();
-        let Command::Token {
-            command: TokenCommand::Create(args),
-        } = cli.command
-        else {
-            panic!("expected token create");
-        };
-        assert_eq!(args.project.name, "shop-frontend");
-        assert_eq!(args.kind, CredentialKind::Read);
-        assert_eq!(args.grants, ["composer:acme/*:*", "npm:@acme/sdk:^2.0"]);
-    }
-
-    #[test]
-    fn delete_requires_a_version_or_all() {
-        assert!(Cli::try_parse_from(["sreg", "delete", "npm", "@acme/sdk"]).is_err());
-        assert!(
-            Cli::try_parse_from(["sreg", "delete", "npm", "@acme/sdk", "1.0.0", "--all"]).is_err()
-        );
-        let cli =
-            Cli::try_parse_from(["sreg", "delete", "npm", "@acme/sdk", "--all", "--yes"]).unwrap();
-        let Command::Delete(args) = cli.command else {
-            panic!("expected delete");
-        };
-        assert!(args.all && args.yes);
-        assert_eq!(args.version, None);
-    }
-
-    #[test]
-    fn token_rotate_defaults_to_fourteen_days() {
-        let cli = Cli::try_parse_from(["sreg", "token", "rotate", "--project", "p1"]).unwrap();
-        let Command::Token {
-            command: TokenCommand::Rotate(args),
-        } = cli.command
-        else {
-            panic!("expected token rotate");
-        };
-        assert_eq!(args.expire_old, "14d");
     }
 
     #[test]

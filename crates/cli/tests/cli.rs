@@ -6,21 +6,19 @@ use predicates::prelude::*;
 #[test]
 fn help_lists_all_commands() {
     let mut assert = cargo_bin_cmd!("sreg").arg("--help").assert().success();
-    for command in [
-        "composer", "npm", "cargo", "whoami", "token", "yank", "delete", "auth",
-    ] {
+    for command in ["composer", "npm", "cargo", "whoami", "auth", "version"] {
         assert = assert.stdout(predicate::str::contains(command));
     }
 }
 
 #[test]
-fn token_help_lists_its_subcommands() {
-    let mut assert = cargo_bin_cmd!("sreg")
-        .args(["token", "--help"])
-        .assert()
-        .success();
-    for command in ["create", "rotate", "list", "revoke"] {
-        assert = assert.stdout(predicate::str::contains(command));
+fn administrative_commands_are_not_available() {
+    for command in ["token", "yank", "delete"] {
+        cargo_bin_cmd!("sreg")
+            .arg(command)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("unrecognized subcommand"));
     }
 }
 
