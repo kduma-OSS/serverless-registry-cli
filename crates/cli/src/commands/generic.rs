@@ -74,7 +74,15 @@ pub async fn publish(
         tag: None,
         append: Some(!args.no_append),
     };
-    publish_package(global, out, &package, options, &args.oidc).await
+    publish_package(
+        global,
+        out,
+        &package,
+        options,
+        &args.oidc,
+        args.skip_existing,
+    )
+    .await
 }
 
 pub async fn get(global: &GlobalArgs, out: &Output, args: &GenericGetArgs) -> anyhow::Result<()> {

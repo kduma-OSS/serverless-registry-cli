@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::Serialize;
 use sreg_core::models::PublishCommitResponse;
 use sreg_core::publish::{publish, PublishOptions, PublishOutcome};
-use sreg_core::{Ecosystem, Package};
+use sreg_core::{Ecosystem, Error, Package};
 #[cfg(any(
     feature = "composer",
     feature = "npm",
@@ -58,27 +58,56 @@ pub async fn run_packager(
         tag,
         append: None,
     };
-    publish_package(global, out, &package, options, &args.oidc).await
+    publish_package(
+        global,
+        out,
+        &package,
+        options,
+        &args.oidc,
+        args.skip_existing,
+    )
+    .await
 }
 
 /// Publishes an already built `package`.
 ///
 /// The token is resolved only now, after packaging, so that a short-lived OIDC token
-/// is as fresh as possible when the upload starts.
+/// is as fresh as possible when the upload starts. With `skip_existing`, a version (or,
+/// when appending, a file) that is already published is reported as skipped and the
+/// command succeeds instead of exiting with code 2.
 pub async fn publish_package(
     global: &GlobalArgs,
     out: &Output,
     package: &Package,
     options: PublishOptions,
     oidc: &OidcArgs,
+    skip_existing: bool,
 ) -> anyhow::Result<()> {
     let client = context::client_with(global, oidc.oidc, oidc.project.as_deref()).await?;
-    let outcome = publish(&client, package, options).await.with_context(|| {
-        format!(
-            "failed to publish {} {} {}",
-            package.eco, package.name, package.version
-        )
-    })?;
+    let outcome = match publish(&client, package, options).await {
+        Ok(outcome) => outcome,
+        Err(err @ (Error::VersionExists | Error::FileExists { .. })) if skip_existing => {
+            tracing::debug!(error = %err, "already published; skipping");
+            let report = SkippedReport {
+                skipped: true,
+                eco: package.eco,
+                name: package.name.clone(),
+                version: package.version.clone(),
+            };
+            return out.emit(&report, || {
+                println!(
+                    "{} {} {}: version already published, skipping",
+                    report.eco, report.name, report.version
+                )
+            });
+        }
+        Err(err) => {
+            return Err(anyhow::Error::new(err).context(format!(
+                "failed to publish {} {} {}",
+                package.eco, package.name, package.version
+            )))
+        }
+    };
 
     match outcome {
         PublishOutcome::DryRun { init } => {
@@ -89,6 +118,15 @@ pub async fn publish_package(
             out.emit(&response, || print_published(&response))
         }
     }
+}
+
+/// `--skip-existing --json` output when the version is already published.
+#[derive(Serialize)]
+struct SkippedReport {
+    skipped: bool,
+    eco: Ecosystem,
+    name: String,
+    version: String,
 }
 
 /// `--dry-run --json` output. The presigned URLs are deliberately left out.

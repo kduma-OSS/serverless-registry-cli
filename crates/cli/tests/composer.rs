@@ -298,6 +298,56 @@ async fn oidc_publishes_with_a_github_token() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn existing_versions_exit_with_two_unless_skipped() {
+    let server = MockServer::start().await;
+    let repo = repository(Some("v1.2.3"));
+    let dir = repo.path().to_str().unwrap();
+    Mock::given(method("POST"))
+        .and(path("/api/v1/publish/init"))
+        .respond_with(common::error(
+            409,
+            "version_exists",
+            "acme/sdk 1.2.3 already exists",
+        ))
+        .expect(3)
+        .mount(&server)
+        .await;
+
+    sreg(&server, &["composer", "publish", "--path", dir])
+        .await
+        .code(2)
+        .stderr(predicate::str::contains("already exists"));
+
+    sreg(
+        &server,
+        &["composer", "publish", "--path", dir, "--skip-existing"],
+    )
+    .await
+    .success()
+    .stdout(predicate::str::contains(
+        "composer acme/sdk 1.2.3: version already published, skipping",
+    ));
+
+    let assert = sreg(
+        &server,
+        &[
+            "composer",
+            "publish",
+            "--path",
+            dir,
+            "--skip-existing",
+            "--json",
+        ],
+    )
+    .await
+    .success();
+    assert_eq!(
+        stdout_json(&assert),
+        json!({ "skipped": true, "eco": "composer", "name": "acme/sdk", "version": "1.2.3" })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn tag_prefix_selects_the_package_tag() {
     let server = MockServer::start().await;
     let repo = repository(Some("v9.9.9"));

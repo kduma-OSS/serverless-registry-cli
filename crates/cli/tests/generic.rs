@@ -234,6 +234,86 @@ async fn existing_file_exits_with_two() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn skip_existing_turns_an_existing_file_into_success() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (linux, _) = files(dir.path());
+    Mock::given(method("POST"))
+        .and(path("/api/v1/publish/init"))
+        .respond_with(error(
+            409,
+            "file_exists",
+            "cli-linux.tar.gz already exists in 1.0.0",
+        ))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    sreg(
+        &server,
+        &[
+            "generic",
+            "publish",
+            "tools/cli",
+            "1.0.0",
+            &linux,
+            "--skip-existing",
+        ],
+    )
+    .await
+    .success()
+    .stdout(predicate::str::contains(
+        "generic tools/cli 1.0.0: version already published, skipping",
+    ));
+
+    let assert = sreg(
+        &server,
+        &[
+            "generic",
+            "publish",
+            "tools/cli",
+            "1.0.0",
+            &linux,
+            "--skip-existing",
+            "--json",
+        ],
+    )
+    .await
+    .success();
+    assert_eq!(
+        stdout_json(&assert),
+        json!({ "skipped": true, "eco": "generic", "name": "tools/cli", "version": "1.0.0" })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn skip_existing_does_not_hide_other_errors() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (linux, _) = files(dir.path());
+    Mock::given(method("POST"))
+        .and(path("/api/v1/publish/init"))
+        .respond_with(error(409, "version_closed", "the append window has closed"))
+        .mount(&server)
+        .await;
+
+    sreg(
+        &server,
+        &[
+            "generic",
+            "publish",
+            "tools/cli",
+            "1.0.0",
+            &linux,
+            "--skip-existing",
+        ],
+    )
+    .await
+    .code(1)
+    .stderr(predicate::str::contains("append window"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn client_too_old_on_publish_exits_with_three() {
     let server = MockServer::start().await;
     let dir = tempfile::tempdir().unwrap();

@@ -172,6 +172,10 @@ pub struct PublishArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Exit with 0 instead of 2 when the version is already published (409)
+    #[arg(long)]
+    pub skip_existing: bool,
+
     #[command(flatten)]
     pub oidc: OidcArgs,
 }
@@ -293,6 +297,10 @@ pub struct GenericPublishArgs {
     /// Stop after the registry has accepted the upload declaration (`init`)
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Exit with 0 instead of 2 when the version is already published (409)
+    #[arg(long)]
+    pub skip_existing: bool,
 
     #[command(flatten)]
     pub oidc: OidcArgs,
