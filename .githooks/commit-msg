@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Hook: commit-msg | Enforce Conventional Commits + forbid Co-Authored-By trailers
+
+set -euo pipefail
+
+COMMIT_MSG_FILE="$1"
+SUBJECT=$(head -1 "$COMMIT_MSG_FILE")
+
+# --- Forbid Co-Authored-By trailers -----------------------------------------
+# Scan the real message only: drop the verbose scissors diff and comment lines
+# (git strips these itself) so we don't match text inside a diff or a comment.
+MSG_BODY=$(sed '/^#.*>8/,$d' "$COMMIT_MSG_FILE" | grep -v '^#' || true)
+
+if printf '%s\n' "$MSG_BODY" | grep -qiE '^[[:space:]]*Co-authored-by:'; then
+  echo "Commit message contains a 'Co-Authored-By' trailer."
+  echo ""
+  echo "This project does not record co-authors in commits."
+  echo "Remove the Co-Authored-By line(s) and commit again."
+  echo ""
+  exit 1
+fi
+
+# --- Skip auto-generated merge/revert subjects ------------------------------
+if echo "$SUBJECT" | grep -qE '^(Merge|Revert)'; then
+  exit 0
+fi
+
+# --- Enforce Conventional Commits -------------------------------------------
+PATTERN="^(feat|fix|docs|style|refactor|test|chore|build|ci|perf|revert)(\([a-zA-Z0-9_-]+\))?!?: .{1,}"
+
+if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
+  echo "Invalid commit message format."
+  echo ""
+  echo "Expected: type(scope)?: description"
+  echo "Allowed types: feat, fix, docs, style, refactor, test, chore, build, ci, perf, revert"
+  echo ""
+  echo "Examples:"
+  echo "  feat(zpl): add bitmap rendering mode"
+  echo "  fix: resolve panic in XML parser on empty input"
+  echo "  docs: describe the plugin C-ABI contract"
+  echo ""
+  echo "See https://www.conventionalcommits.org/"
+  echo ""
+  exit 1
+fi
+
+exit 0
