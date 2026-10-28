@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/kduma-OSS/serverless-registry-cli"
@@ -21,14 +21,14 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 # Internal crates
-sreg-core = { path = "crates/core", version = "0.1.1" }
-sreg-eco-composer = { path = "crates/eco-composer", version = "0.1.1" }
-sreg-eco-npm = { path = "crates/eco-npm", version = "0.1.1" }
-sreg-eco-cargo = { path = "crates/eco-cargo", version = "0.1.1" }
-sreg-eco-generic = { path = "crates/eco-generic", version = "0.1.1" }
-sreg-eco-nuget = { path = "crates/eco-nuget", version = "0.1.1" }
-sreg-eco-swift = { path = "crates/eco-swift", version = "0.1.1" }
-sreg-eco-maven = { path = "crates/eco-maven", version = "0.1.1" }
+sreg-core = { path = "crates/core", version = "0.1.2" }
+sreg-eco-composer = { path = "crates/eco-composer", version = "0.1.2" }
+sreg-eco-npm = { path = "crates/eco-npm", version = "0.1.2" }
+sreg-eco-cargo = { path = "crates/eco-cargo", version = "0.1.2" }
+sreg-eco-generic = { path = "crates/eco-generic", version = "0.1.2" }
+sreg-eco-nuget = { path = "crates/eco-nuget", version = "0.1.2" }
+sreg-eco-swift = { path = "crates/eco-swift", version = "0.1.2" }
+sreg-eco-maven = { path = "crates/eco-maven", version = "0.1.2" }
 
 # Command line and logging
 clap = { version = "4.6.7", features = ["derive", "env"] }
