@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1-beta.1] - 2026-10-28
+
 ### Added
 
 - The registry URL may carry the token in its userinfo, Composer style:
@@ -167,5 +169,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `/` encoded as `%2F` (`/generic/acme%2Fplugin-foo/latest`), as the API contract
   requires.
 
-[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.1-beta.1...HEAD
+[0.1.1-beta.1]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.0...v0.1.1-beta.1
 [0.1.0]: https://github.com/kduma-OSS/serverless-registry-cli/releases/tag/v0.1.0
