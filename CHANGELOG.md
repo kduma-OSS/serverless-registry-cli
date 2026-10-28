@@ -29,8 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bump and release** workflow (`.github/workflows/bump-and-release.yml`, started by hand
   on `main`): computes the next version (`prerelease`, `patch`, `minor`, `release`,
   `custom`, …) with the dependency-free `scripts/bump-version.mjs`, sets it in
-  `Cargo.toml`, `Cargo.lock` and `action/VERSION`, rolls `CHANGELOG.md`, commits and tags
-  `v<version>` and starts the cargo-dist `Release` workflow for the tag.
+  `Cargo.toml` and `Cargo.lock`, rolls `CHANGELOG.md`, commits and tags `v<version>` and
+  starts the cargo-dist `Release` workflow for the tag.
+- cargo-dist post-announce job (`.github/workflows/release-action.yml`): after a stable
+  release it starts the Release workflow of
+  `kduma-OSS/serverless-registry-publish-action` with the new version as the action's
+  default `sreg-version`, authenticated as a GitHub App (variable `RELEASE_APP_ID`, secret
+  `RELEASE_APP_PRIVATE_KEY`). Without the App it only prints a notice; the action
+  repository's hourly sync then picks the release up.
+
+### Changed
+
+- The GitHub Action moved to
+  [`kduma-OSS/serverless-registry-publish-action`](https://github.com/kduma-OSS/serverless-registry-publish-action)
+  (`uses: kduma-OSS/serverless-registry-publish-action@v1`), with its history; it is
+  versioned and released there, and the `action/` directory and `action/VERSION` are gone.
 
 ## [0.1.0] - 2026-10-28
 
