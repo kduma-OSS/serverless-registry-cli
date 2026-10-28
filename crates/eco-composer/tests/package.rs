@@ -1,5 +1,6 @@
 //! Packaging the fixture library with real `git` and with the directory fallback.
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -79,7 +80,11 @@ fn opts(dir: &Path, version: Option<&str>) -> PackageOptions {
 
 fn zip_names(path: &Path) -> Vec<String> {
     let archive = zip::ZipArchive::new(File::open(path).unwrap()).unwrap();
-    archive.file_names().map(str::to_owned).collect()
+    archive
+        .file_names()
+        .flatten()
+        .map(Cow::into_owned)
+        .collect()
 }
 
 fn fixture_manifest() -> Value {
