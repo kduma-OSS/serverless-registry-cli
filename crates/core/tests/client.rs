@@ -303,12 +303,11 @@ async fn non_idempotent_requests_are_not_retried() {
         .mount(&server)
         .await;
 
-    let request = CreateCredentialRequest {
-        project: "shop-frontend".into(),
-        kind: Kind::Read,
-        grants: vec![Grant::parse_shorthand("composer:acme/*").unwrap()],
-        secret: None,
-    };
+    let request = CreateCredentialRequest::single(
+        "shop-frontend",
+        Kind::Read,
+        vec![Grant::parse_shorthand("composer:acme/*").unwrap()],
+    );
     let err = client(&server, Some(TOKEN))
         .create_credential(&request)
         .await

@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `sreg login --publish` no longer stops at 20 versions on its own: the registry decides, with
   its `MAX_PUBLISH_SCOPES` setting (20 by default), and its error names the limit.
+- Documentation: `docs/spec.md` and `docs/api.md` synced with the registry (the scope of an
+  existing secret can be edited with `PATCH …/secrets/<id>`).
+
+## [0.2.0] - 2026-10-28
+
+### Added
+
+- Credentials with roles (registry API, `docs/api.md` 2.4): `sreg whoami` prints `Roles:` (the
+  roles the token may use) and, for a token with both `read` and `publish`, a list of grants
+  for each role. `--json` output gains `roles` and `access`. The client models know `roles`,
+  `read_grants`, `publish_grants` and the `scope` of a secret, and `update_credential` sends
+  `PATCH` with roles and per-role grants. Registries without roles keep working: `kind` and
+  `grants` are used when `roles` and `access` are missing.
+
+### Changed
+
+- `sreg whoami` prints `Roles:` instead of `Kind:` (`--json` still has `kind`).
 
 ## [0.1.5] - 2026-10-28
 
@@ -244,7 +261,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `/` encoded as `%2F` (`/generic/acme%2Fplugin-foo/latest`), as the API contract
   requires.
 
-[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/kduma-OSS/serverless-registry-cli/compare/v0.1.2...v0.1.3

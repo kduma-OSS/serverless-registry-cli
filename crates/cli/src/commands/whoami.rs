@@ -12,21 +12,42 @@ pub async fn run(global: &GlobalArgs, out: &Output) -> anyhow::Result<()> {
 
     out.emit(&whoami, || {
         println!("Project: {}", whoami.project);
-        println!("Kind:    {}", whoami.kind);
-        if whoami.grants.is_empty() {
-            let note = if whoami.kind == Kind::Admin {
+        let roles: Vec<&str> = whoami.token_roles().iter().map(|r| r.as_str()).collect();
+        println!("Roles:   {}", roles.join(", "));
+        let sections = whoami.role_grants();
+        if sections.is_empty() {
+            let note = if whoami.token_roles().contains(&Kind::Admin) {
                 "none (admin credentials have no grants)"
             } else {
                 "none"
             };
             println!("Grants:  {note}");
-        } else {
-            println!("Grants:");
-            // `transitive` only matters for read credentials (docs/api.md 5.1).
-            let transitive = whoami.kind == Kind::Read;
-            println!("{}", indent(&grants_table(&whoami.grants, transitive), 2));
+        }
+        // A token with both roles shows one list of grants per role.
+        let many = sections.len() > 1;
+        for (role, grants) in sections {
+            let label = match (many, role) {
+                (false, _) => "Grants".to_owned(),
+                (true, role) => format!("{} grants", capitalize(role.as_str())),
+            };
+            if grants.is_empty() {
+                println!("{label}: none");
+            } else {
+                println!("{label}:");
+                // `transitive` only matters for read grants (docs/api.md 5.1).
+                let transitive = role == Kind::Read;
+                println!("{}", indent(&grants_table(grants, transitive), 2));
+            }
         }
     })
+}
+
+fn capitalize(word: &str) -> String {
+    let mut chars = word.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// Formats grants as a table; with `transitive`, a column tells whether each grant also

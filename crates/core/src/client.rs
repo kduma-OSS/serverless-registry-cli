@@ -22,7 +22,8 @@ use crate::models::{
     DeleteVersionResponse, DescribeSecretRequest, ErrorBody, ExpireSecretRequest,
     ExpireSecretResponse, GenericAmbiguousBody, GenericFeedVersion, Grant, PackageEntry,
     PackageList, PublishCommitRequest, PublishCommitResponse, PublishInitRequest,
-    PublishInitResponse, ReindexResponse, UpdateGrantsRequest, VersionInfo, Whoami, YankResponse,
+    PublishInitResponse, ReindexResponse, UpdateCredentialRequest, UpdateGrantsRequest,
+    VersionInfo, Whoami, YankResponse,
 };
 use crate::packager::Ecosystem;
 use crate::retry::{is_retryable, RetryPolicy};
@@ -376,6 +377,15 @@ impl Client {
             grants: grants.to_vec(),
         };
         self.patch(&["credentials", project], &body).await
+    }
+
+    /// `PATCH /api/v1/credentials/<project>` with roles and/or the grants of each role.
+    pub async fn update_credential(
+        &self,
+        project: &str,
+        request: &UpdateCredentialRequest,
+    ) -> Result<Credential> {
+        self.patch(&["credentials", project], request).await
     }
 
     /// `DELETE /api/v1/credentials/<project>`.
