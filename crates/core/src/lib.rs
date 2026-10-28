@@ -13,6 +13,7 @@ pub mod oidc;
 pub mod packager;
 pub mod publish;
 pub mod retry;
+pub mod token;
 pub mod upload;
 
 #[cfg(test)]

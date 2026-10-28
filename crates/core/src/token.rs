@@ -1,0 +1,208 @@
+//! Resolution of the registry token shared by all commands (`docs/api.md` 7.1).
+
+use url::Url;
+
+use crate::error::{Error, Result};
+use crate::oidc::{compose_token, github_oidc_token};
+
+/// Where the token comes from.
+#[derive(Debug, Clone, Copy)]
+pub struct TokenFlags<'a> {
+    /// `--token` or `REGISTRY_TOKEN`.
+    pub token: Option<&'a str>,
+    /// `--oidc`: build the token from a GitHub Actions OIDC token.
+    pub oidc: bool,
+    /// `--project`: the project the OIDC token is issued for.
+    pub project: Option<&'a str>,
+    /// The registry URL; its form without trailing slash is the OIDC audience.
+    pub registry: &'a Url,
+}
+
+/// Resolves the token to authenticate with.
+///
+/// With `oidc`, requests a GitHub Actions OIDC token with the registry URL as audience
+/// and returns `<project>:gh.<jwt>`; `project` is then required. Otherwise returns
+/// `token`.
+pub async fn resolve_token(flags: TokenFlags<'_>) -> Result<String> {
+    if flags.oidc {
+        let project = flags
+            .project
+            .ok_or_else(|| Error::InvalidInput("--oidc requires --project <PROJECT>".into()))?;
+        validate_login(project)?;
+        let jwt = github_oidc_token(&audience(flags.registry)).await?;
+        return Ok(compose_token(project, &jwt));
+    }
+
+    match flags.token.map(str::trim) {
+        Some(token) if !token.is_empty() => {
+            Token::login(token)?;
+            Ok(token.to_owned())
+        }
+        _ => Err(Error::InvalidInput(
+            "no token: pass --token or set REGISTRY_TOKEN (in GitHub Actions you can use \
+             --oidc --project <PROJECT> instead)"
+                .into(),
+        )),
+    }
+}
+
+/// The OIDC audience for a registry: its URL without query, fragment and trailing
+/// slash, i.e. the Worker's `PUBLIC_URL`.
+pub fn audience(registry: &Url) -> String {
+    let mut url = registry.clone();
+    url.set_query(None);
+    url.set_fragment(None);
+    url.as_str().trim_end_matches('/').to_owned()
+}
+
+/// Helpers for tokens of the form `[<source>.]<project>:[<type>.]<secret>`.
+#[derive(Debug, Clone, Copy)]
+pub struct Token;
+
+impl Token {
+    /// The login (`[<prefix>][<source>.]<project>`): everything before the first `:`.
+    ///
+    /// The login is not secret and may be shown to the user.
+    pub fn login(token: &str) -> Result<&str> {
+        Self::split(token).map(|(login, _)| login)
+    }
+
+    /// The password (`[<type>.]<secret>`): everything after the first `:`. Secret.
+    pub fn password(token: &str) -> Result<&str> {
+        Self::split(token).map(|(_, password)| password)
+    }
+
+    fn split(token: &str) -> Result<(&str, &str)> {
+        match token.split_once(':') {
+            Some((login, password)) if !login.is_empty() && !password.is_empty() => {
+                Ok((login, password))
+            }
+            _ => Err(Error::InvalidInput(
+                "malformed token: expected [<source>.]<project>:[<type>.]<secret>".into(),
+            )),
+        }
+    }
+}
+
+fn validate_login(project: &str) -> Result<()> {
+    let valid = !project.is_empty()
+        && project
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.');
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(format!(
+            "invalid project `{project}`: expected [<source>.]<project> in lower case"
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use wiremock::matchers::{method, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::oidc::{REQUEST_TOKEN_ENV, REQUEST_URL_ENV};
+    use crate::test_env::EnvGuard;
+
+    fn registry() -> Url {
+        Url::parse("https://packages.example.com/").unwrap()
+    }
+
+    fn flags<'a>(registry: &'a Url, token: Option<&'a str>) -> TokenFlags<'a> {
+        TokenFlags {
+            token,
+            oidc: false,
+            project: None,
+            registry,
+        }
+    }
+
+    #[test]
+    fn audience_has_no_trailing_slash() {
+        assert_eq!(audience(&registry()), "https://packages.example.com");
+        let nested = Url::parse("https://example.com/registry/?x=1#y").unwrap();
+        assert_eq!(audience(&nested), "https://example.com/registry");
+    }
+
+    #[test]
+    fn token_splits_at_the_first_colon() {
+        let token = "ci-acme-sdk:gh.eyJ:a.eyJ.sig";
+        assert_eq!(Token::login(token).unwrap(), "ci-acme-sdk");
+        assert_eq!(Token::password(token).unwrap(), "gh.eyJ:a.eyJ.sig");
+        assert_eq!(Token::login("okta.shop:Zm9v").unwrap(), "okta.shop");
+        for malformed in ["no-colon", ":secret", "project:"] {
+            assert!(Token::login(malformed).is_err(), "{malformed}");
+        }
+    }
+
+    #[tokio::test]
+    async fn uses_the_given_token() {
+        let registry = registry();
+        let token = resolve_token(flags(&registry, Some(" shop:secret\n")))
+            .await
+            .unwrap();
+        assert_eq!(token, "shop:secret");
+    }
+
+    #[tokio::test]
+    async fn missing_or_malformed_token_is_rejected() {
+        let registry = registry();
+        for token in [None, Some(""), Some("no-colon")] {
+            let err = resolve_token(flags(&registry, token)).await.unwrap_err();
+            assert!(matches!(err, Error::InvalidInput(_)), "{token:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn oidc_requires_a_valid_project() {
+        let registry = registry();
+        for project in [None, Some("Shop:x")] {
+            let err = resolve_token(TokenFlags {
+                token: None,
+                oidc: true,
+                project,
+                registry: &registry,
+            })
+            .await
+            .unwrap_err();
+            assert!(matches!(err, Error::InvalidInput(_)), "{project:?}");
+        }
+    }
+
+    #[test]
+    fn oidc_builds_a_gh_token_for_the_registry_audience() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let server = runtime.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(query_param("audience", "https://packages.example.com"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({ "value": "eyJ.x.y" })),
+                )
+                .mount(&server)
+                .await;
+            server
+        });
+        let url = format!("{}/token?api-version=2.0", server.uri());
+        let _env = EnvGuard::set(&[
+            (REQUEST_URL_ENV, Some(url.as_str())),
+            (REQUEST_TOKEN_ENV, Some("request-token")),
+        ]);
+        let registry = registry();
+
+        let token = runtime
+            .block_on(resolve_token(TokenFlags {
+                token: Some("ignored:token"),
+                oidc: true,
+                project: Some("ci-acme-sdk"),
+                registry: &registry,
+            }))
+            .unwrap();
+
+        assert_eq!(token, "ci-acme-sdk:gh.eyJ.x.y");
+    }
+}
