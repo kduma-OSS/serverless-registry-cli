@@ -166,7 +166,8 @@ impl Client {
     /// `GET <registry>/generic/<name>/<version>` (or `/latest`): one version of a
     /// generic package from the generic feed.
     ///
-    /// A `group/name` package name is sent as two path segments. Every label becomes a
+    /// The package name is one path segment, so the `/` of a grouped name is sent as
+    /// `%2F` (`/generic/acme%2Fplugin-foo/latest`). Every label becomes a
     /// `label=<key>:<value>` query parameter; `prerelease` adds `channel=prerelease`.
     pub async fn generic_version(
         &self,
@@ -175,10 +176,7 @@ impl Client {
         labels: &[(String, String)],
         prerelease: bool,
     ) -> Result<GenericFeedVersion> {
-        let mut segments = vec!["generic"];
-        segments.extend(name.split('/'));
-        segments.push(version);
-        let mut url = self.url(&segments)?;
+        let mut url = self.url(&["generic", name, version])?;
         {
             let mut query = url.query_pairs_mut();
             for (key, value) in labels {

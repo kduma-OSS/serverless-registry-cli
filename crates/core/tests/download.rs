@@ -36,7 +36,7 @@ fn feed_file(registry: &MockServer, sha256: &str) -> GenericFeedFile {
         sha256: sha256.into(),
         labels: [("os".to_owned(), "linux".to_owned())].into(),
         url: format!(
-            "{}/generic/tools/cli/1.0.0/cli-linux.tar.gz",
+            "{}/generic/tools%2Fcli/1.0.0/cli-linux.tar.gz",
             registry.uri()
         ),
     }
@@ -46,7 +46,7 @@ async fn redirecting_servers(body: &'static [u8]) -> (MockServer, MockServer) {
     let registry = MockServer::start().await;
     let storage = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/generic/tools/cli/1.0.0/cli-linux.tar.gz"))
+        .and(path("/generic/tools%2Fcli/1.0.0/cli-linux.tar.gz"))
         .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
         .respond_with(
             ResponseTemplate::new(302).insert_header(
@@ -73,7 +73,7 @@ async fn redirecting_servers(body: &'static [u8]) -> (MockServer, MockServer) {
 async fn feed_request_carries_labels_and_channel() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/generic/tools/cli/latest"))
+        .and(path("/generic/tools%2Fcli/latest"))
         .and(query_param("label", "os:linux"))
         .and(query_param("label", "arch:x86_64"))
         .and(query_param("channel", "prerelease"))
@@ -87,7 +87,7 @@ async fn feed_request_carries_labels_and_channel() {
             "files": [{
                 "name": "cli-linux.tar.gz", "size": 5, "sha256": CONTENT_SHA256,
                 "labels": { "os": "linux", "arch": "x86_64" },
-                "url": "https://packages.example.com/generic/tools/cli/1.1.0-rc.1/cli-linux.tar.gz"
+                "url": "https://packages.example.com/generic/tools%2Fcli/1.1.0-rc.1/cli-linux.tar.gz"
             }]
         })))
         .expect(1)

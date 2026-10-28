@@ -50,7 +50,7 @@ fn init_response(server: &MockServer) -> ResponseTemplate {
 }
 
 fn commit_response(server: &MockServer) -> ResponseTemplate {
-    let base = format!("{}/generic/tools/cli/1.0.0", server.uri());
+    let base = format!("{}/generic/tools%2Fcli/1.0.0", server.uri());
     json(
         201,
         json!({
@@ -298,7 +298,7 @@ async fn feed_server(storage_body: &'static [u8]) -> (MockServer, MockServer) {
     let registry = MockServer::start().await;
     let storage = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/generic/tools/cli/latest"))
+        .and(path("/generic/tools%2Fcli/latest"))
         .and(query_param("label", "os:linux"))
         .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
         .respond_with(json(
@@ -309,14 +309,14 @@ async fn feed_server(storage_body: &'static [u8]) -> (MockServer, MockServer) {
                 "files": [{
                     "name": "cli-linux.tar.gz", "size": 5, "sha256": HELLO_SHA256,
                     "labels": { "os": "linux" },
-                    "url": format!("{}/generic/tools/cli/1.0.0/cli-linux.tar.gz", registry.uri())
+                    "url": format!("{}/generic/tools%2Fcli/1.0.0/cli-linux.tar.gz", registry.uri())
                 }]
             }),
         ))
         .mount(&registry)
         .await;
     Mock::given(method("GET"))
-        .and(path("/generic/tools/cli/1.0.0/cli-linux.tar.gz"))
+        .and(path("/generic/tools%2Fcli/1.0.0/cli-linux.tar.gz"))
         .respond_with(
             ResponseTemplate::new(302).insert_header(
                 "location",

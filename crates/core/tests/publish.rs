@@ -482,10 +482,10 @@ async fn uploads_every_file_of_a_generic_version() {
         .and(path("/api/v1/publish/commit"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "eco": "generic", "name": "tools/cli", "version": "1.0.0",
-            "url": "https://packages.example.com/generic/tools/cli/1.0.0",
+            "url": "https://packages.example.com/generic/tools%2Fcli/1.0.0",
             "files": [
-                { "name": "cli-linux.tar.gz", "url": "https://packages.example.com/generic/tools/cli/1.0.0/cli-linux.tar.gz" },
-                { "name": "cli-macos.tar.gz", "url": "https://packages.example.com/generic/tools/cli/1.0.0/cli-macos.tar.gz" }
+                { "name": "cli-linux.tar.gz", "url": "https://packages.example.com/generic/tools%2Fcli/1.0.0/cli-linux.tar.gz" },
+                { "name": "cli-macos.tar.gz", "url": "https://packages.example.com/generic/tools%2Fcli/1.0.0/cli-macos.tar.gz" }
             ]
         })))
         .expect(1)
