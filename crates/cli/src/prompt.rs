@@ -13,6 +13,12 @@ pub fn confirm(question: &str) -> anyhow::Result<bool> {
     Ok(is_yes(&answer))
 }
 
+/// Asks the user to type `expected` and returns whether they did.
+pub fn confirm_by_typing(question: &str, expected: &str) -> anyhow::Result<bool> {
+    let answer = ask(&format!("{question}\nType `{expected}` to confirm: "))?;
+    Ok(answer.trim() == expected)
+}
+
 /// Fails unless the user confirms with [`confirm`] or `yes` is set.
 pub fn require(yes: bool, question: &str) -> anyhow::Result<()> {
     if yes || confirm(question)? {

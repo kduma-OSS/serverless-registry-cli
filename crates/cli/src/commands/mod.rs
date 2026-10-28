@@ -1,5 +1,6 @@
 //! Command implementations.
 
+mod admin;
 mod token;
 mod version;
 mod whoami;
@@ -15,6 +16,8 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Whoami => whoami::run(global, &out).await,
         Command::Version => version::run(global, &out).await,
         Command::Token { command } => token::run(global, &out, command).await,
+        Command::Yank(args) => admin::yank(global, &out, args).await,
+        Command::Delete(args) => admin::delete(global, &out, args).await,
         other => anyhow::bail!("`sreg {}` is not implemented yet", other.name()),
     }
 }
