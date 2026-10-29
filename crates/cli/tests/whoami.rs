@@ -214,6 +214,32 @@ async fn whoami_for_admin_has_no_grants() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn whoami_for_an_admin_that_also_reads_shows_both_roles_and_its_grants() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/whoami"))
+        .respond_with(json(
+            200,
+            json!({
+                "project": "ops", "kind": "admin", "grants": [],
+                "roles": ["read", "admin"],
+                "access": { "read": [
+                    { "eco": "npm", "package": "@acme/sdk", "versions": "*", "transitive": true }
+                ] }
+            }),
+        ))
+        .mount(&server)
+        .await;
+
+    sreg(&server, &["whoami"])
+        .await
+        .success()
+        .stdout(predicate::str::contains("Roles:   read, admin"))
+        .stdout(predicate::str::contains("@acme/sdk"))
+        .stdout(predicate::str::contains("admin credentials have no grants").not());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn whoami_of_a_yank_or_delete_login_lists_the_approved_operations() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
