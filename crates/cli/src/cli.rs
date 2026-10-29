@@ -116,10 +116,10 @@ pub enum Command {
     /// Show the identity and grants of the current token
     Whoami,
 
-    /// Yank a version so it is no longer offered for new installs (admin)
+    /// Yank a version so it is no longer offered for new installs (admin or yank role)
     Yank(VersionArgs),
 
-    /// Delete a version, or with --all a whole package, from the registry (admin)
+    /// Delete a version, or with --all a whole package, from the registry (admin or delete role)
     Delete(DeleteArgs),
 
     /// Write registry credentials for a package manager or print them for export
