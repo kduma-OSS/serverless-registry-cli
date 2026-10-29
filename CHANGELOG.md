@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PATCH …/secrets/<id>` with a description and/or a scope (`UpdateSecretRequest`);
   `describe_secret` keeps working and sends only the description.
 - `sreg whoami` lists the operations of a yank or delete login token (`ops` in the registry's
-  answer, also in `--json`) instead of reporting that it has no grants.
+  answer, also in `--json`) instead of reporting that it has no grants, and the package
+  versions a publish login token may publish (`scopes`).
 
 ## [0.2.1] - 2026-10-28
 

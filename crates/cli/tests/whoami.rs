@@ -248,3 +248,34 @@ async fn whoami_of_a_yank_or_delete_login_lists_the_approved_operations() {
     assert_eq!(body["ops"][0]["op"], "yank");
     assert_eq!(body["ops"][1]["package"], "acme-core");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn whoami_of_a_publish_login_lists_the_approved_versions() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/whoami"))
+        .respond_with(json(
+            200,
+            json!({
+                "project": "ci", "kind": "publish",
+                "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*" }],
+                "roles": ["publish"],
+                "access": { "publish": [{ "eco": "composer", "package": "acme/*", "versions": "*" }] },
+                "scopes": [{ "eco": "composer", "package": "acme/sdk", "version": "1.4.0" }]
+            }),
+        ))
+        .mount(&server)
+        .await;
+
+    sreg(&server, &["whoami"])
+        .await
+        .success()
+        .stdout(predicate::str::contains(
+            "this token may publish only these",
+        ))
+        .stdout(predicate::str::contains("composer acme/sdk 1.4.0"))
+        .stdout(predicate::str::contains("acme/*"));
+
+    let assert = sreg(&server, &["whoami", "--json"]).await.success();
+    assert_eq!(stdout_json(&assert)["scopes"][0]["package"], "acme/sdk");
+}

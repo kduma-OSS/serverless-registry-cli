@@ -13,6 +13,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 use crate::error::{Error, Result};
+use crate::login::PublishScope;
 use crate::packager::Ecosystem;
 
 /// Role of a credential.
@@ -176,6 +177,9 @@ pub struct Whoami {
     /// The grants of each role in [`roles`](Self::roles); see [`Whoami::role_grants`].
     #[serde(default, skip_serializing_if = "Access::is_empty")]
     pub access: Access,
+    /// A publish login token only: the package versions it may publish, and nothing else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<PublishScope>,
     /// A yank or delete login token only: the operations it may perform, and nothing else.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ops: Vec<TokenOperation>,
@@ -1303,6 +1307,24 @@ mod tests {
             back["ops"][1],
             json!({ "op": "delete", "eco": "cargo", "package": "acme-core" })
         );
+    }
+
+    #[test]
+    fn whoami_of_a_publish_login_lists_its_versions() {
+        let whoami: Whoami = serde_json::from_value(json!({
+            "project": "ci", "kind": "publish",
+            "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*" }],
+            "roles": ["publish"],
+            "access": { "publish": [{ "eco": "composer", "package": "acme/*", "versions": "*" }] },
+            "scopes": [{ "eco": "composer", "package": "acme/sdk", "version": "1.4.0" }]
+        }))
+        .unwrap();
+        assert_eq!(whoami.scopes.len(), 1);
+        assert_eq!(whoami.scopes[0].package, "acme/sdk");
+        assert_eq!(whoami.scopes[0].version, "1.4.0");
+        assert!(whoami.ops.is_empty());
+        let back = serde_json::to_value(&whoami).unwrap();
+        assert_eq!(back["scopes"][0]["version"], "1.4.0");
     }
 
     #[test]
