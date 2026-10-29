@@ -1,6 +1,7 @@
 //! `sreg whoami`.
 
-use sreg_core::models::{Grant, Kind};
+use sreg_core::login::PublishScope;
+use sreg_core::models::{Grant, Kind, TokenOperation};
 
 use crate::cli::GlobalArgs;
 use crate::context;
@@ -15,13 +16,21 @@ pub async fn run(global: &GlobalArgs, out: &Output) -> anyhow::Result<()> {
         let roles: Vec<&str> = whoami.token_roles().iter().map(|r| r.as_str()).collect();
         println!("Roles:   {}", roles.join(", "));
         let sections = whoami.role_grants();
-        if sections.is_empty() {
+        if sections.is_empty() && whoami.ops.is_empty() {
             let note = if whoami.token_roles().contains(&Kind::Admin) {
                 "none (admin credentials have no grants)"
             } else {
                 "none"
             };
             println!("Grants:  {note}");
+        }
+        if !whoami.scopes.is_empty() {
+            println!("Versions (this token may publish only these):");
+            println!("{}", indent(&versions(&whoami.scopes), 2));
+        }
+        if !whoami.ops.is_empty() {
+            println!("Operations (this token may do only these):");
+            println!("{}", indent(&operations(&whoami.ops), 2));
         }
         // A token with both roles shows one list of grants per role.
         let many = sections.len() > 1;
@@ -40,6 +49,29 @@ pub async fn run(global: &GlobalArgs, out: &Output) -> anyhow::Result<()> {
             }
         }
     })
+}
+
+/// One line per package version a publish login token was approved for.
+fn versions(scopes: &[PublishScope]) -> String {
+    scopes
+        .iter()
+        .map(|scope| format!("{} {} {}", scope.eco, scope.package, scope.version))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One line per approved operation of a yank or delete login token.
+fn operations(ops: &[TokenOperation]) -> String {
+    ops.iter()
+        .map(|op| match &op.version {
+            Some(version) => format!("{} {} {} {}", op.op, op.eco, op.package, version),
+            None => format!(
+                "{} {} {} (the whole package, every version)",
+                op.op, op.eco, op.package
+            ),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn capitalize(word: &str) -> String {

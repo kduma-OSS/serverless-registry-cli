@@ -19,10 +19,10 @@ use crate::error::{Error, Result};
 use crate::models::{
     AddSecretRequest, AddSecretResponse, CreateCredentialRequest, CreateCredentialResponse,
     Credential, CredentialList, DeleteCredentialResponse, DeletePackageResponse,
-    DeleteVersionResponse, DescribeSecretRequest, ErrorBody, ExpireSecretRequest,
-    ExpireSecretResponse, GenericAmbiguousBody, GenericFeedVersion, Grant, PackageEntry,
-    PackageList, PublishCommitRequest, PublishCommitResponse, PublishInitRequest,
-    PublishInitResponse, ReindexResponse, UpdateCredentialRequest, UpdateGrantsRequest,
+    DeleteVersionResponse, ErrorBody, ExpireSecretRequest, ExpireSecretResponse,
+    GenericAmbiguousBody, GenericFeedVersion, Grant, PackageEntry, PackageList,
+    PublishCommitRequest, PublishCommitResponse, PublishInitRequest, PublishInitResponse,
+    ReindexResponse, UpdateCredentialRequest, UpdateGrantsRequest, UpdateSecretRequest,
     VersionInfo, Whoami, YankResponse,
 };
 use crate::packager::Ecosystem;
@@ -411,8 +411,19 @@ impl Client {
         id: &str,
         description: Option<String>,
     ) -> Result<ExpireSecretResponse> {
-        let body = DescribeSecretRequest { description };
-        self.patch(&["credentials", project, "secrets", id], &body)
+        self.update_secret(project, id, &UpdateSecretRequest::description(description))
+            .await
+    }
+
+    /// `PATCH /api/v1/credentials/<project>/secrets/<hash-prefix>`: changes the description
+    /// and/or replaces the scope of an entry, and nothing else.
+    pub async fn update_secret(
+        &self,
+        project: &str,
+        id: &str,
+        request: &UpdateSecretRequest,
+    ) -> Result<ExpireSecretResponse> {
+        self.patch(&["credentials", project, "secrets", id], request)
             .await
     }
 

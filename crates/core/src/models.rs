@@ -13,6 +13,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 use crate::error::{Error, Result};
+use crate::login::PublishScope;
 use crate::packager::Ecosystem;
 
 /// Role of a credential.
@@ -176,6 +177,27 @@ pub struct Whoami {
     /// The grants of each role in [`roles`](Self::roles); see [`Whoami::role_grants`].
     #[serde(default, skip_serializing_if = "Access::is_empty")]
     pub access: Access,
+    /// A publish login token only: the package versions it may publish, and nothing else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<PublishScope>,
+    /// A yank or delete login token only: the operations it may perform, and nothing else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ops: Vec<TokenOperation>,
+}
+
+/// An operation a yank or delete login token was approved for (`ops` of
+/// `GET /api/v1/whoami`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenOperation {
+    /// `yank` or `delete`.
+    pub op: String,
+    /// Ecosystem of the package.
+    pub eco: Ecosystem,
+    /// Package name as the registry stores it.
+    pub package: String,
+    /// The version; absent for a delete of the whole package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 impl Access {
@@ -196,8 +218,9 @@ impl Whoami {
     }
 
     /// The grants of each of the token's roles that carries grants (`admin` has none), in
-    /// `read`, `publish` order. A registry that does not send `access` reports its legacy
-    /// `grants` under `kind`.
+    /// `read`, `publish` order. A registry that does not send `access` is older than
+    /// credential roles: its legacy `grants` are reported under `kind`, which then is a
+    /// single role, so an `admin` has none.
     pub fn role_grants(&self) -> Vec<(Kind, &[Grant])> {
         if self.access.is_empty() {
             return match self.kind {
@@ -662,8 +685,9 @@ pub struct AddSecretRequest {
     /// Expiry (RFC 3339 or `YYYY-MM-DD`); omitted means never.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
-    /// The roles the secret may use. Required for a credential with both `read` and
-    /// `publish`; omitted otherwise.
+    /// The roles the secret may use: a non-empty list of the credential's roles. Required for
+    /// a credential with more than one role; omitted otherwise (the secret then has its only
+    /// role).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<Kind>,
     /// A note about the entry (at most 200 characters).
@@ -842,12 +866,49 @@ impl fmt::Debug for CreateCredentialResponse {
     }
 }
 
-/// `PATCH /api/v1/credentials/<project>/secrets/<hash-prefix>` request: the description of the
-/// entry and nothing else.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DescribeSecretRequest {
-    /// The new description; `None` (sent as `null`) clears it.
-    pub description: Option<String>,
+/// `PATCH /api/v1/credentials/<project>/secrets/<hash-prefix>` request: the description
+/// and/or the scope of the entry and nothing else. At least one field must be set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateSecretRequest {
+    /// The new description: `Some(Some(text))` sets it, `Some(None)` (sent as `null`) clears
+    /// it and `None` leaves it as it is.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub description: Option<Option<String>>,
+    /// The new, complete list of roles the secret may use: a non-empty list of unique roles
+    /// of the credential. `None` leaves it as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Vec<Kind>>,
+}
+
+impl UpdateSecretRequest {
+    /// Sets, or with `None` clears, the description.
+    pub fn description(description: Option<String>) -> Self {
+        Self {
+            description: Some(description),
+            scope: None,
+        }
+    }
+
+    /// Replaces the scope.
+    pub fn scope(scope: Vec<Kind>) -> Self {
+        Self {
+            description: None,
+            scope: Some(scope),
+        }
+    }
+}
+
+/// Keeps a present `null` apart from an absent field (`Some(None)` against `None`).
+fn present<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// `PATCH /api/v1/credentials/<project>` request.
@@ -1227,6 +1288,46 @@ mod tests {
     }
 
     #[test]
+    fn whoami_of_a_yank_or_delete_login_lists_its_operations() {
+        let whoami: Whoami = serde_json::from_value(json!({
+            "project": "root", "kind": "admin", "grants": [], "roles": ["admin"],
+            "access": {},
+            "ops": [
+                { "op": "yank", "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" },
+                { "op": "delete", "eco": "cargo", "package": "acme-core" }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(whoami.token_roles(), vec![Kind::Admin]);
+        assert_eq!(whoami.ops.len(), 2);
+        assert_eq!(whoami.ops[0].version.as_deref(), Some("2.3.1"));
+        assert_eq!(whoami.ops[1].version, None);
+        let back = serde_json::to_value(&whoami).unwrap();
+        assert_eq!(
+            back["ops"][1],
+            json!({ "op": "delete", "eco": "cargo", "package": "acme-core" })
+        );
+    }
+
+    #[test]
+    fn whoami_of_a_publish_login_lists_its_versions() {
+        let whoami: Whoami = serde_json::from_value(json!({
+            "project": "ci", "kind": "publish",
+            "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*" }],
+            "roles": ["publish"],
+            "access": { "publish": [{ "eco": "composer", "package": "acme/*", "versions": "*" }] },
+            "scopes": [{ "eco": "composer", "package": "acme/sdk", "version": "1.4.0" }]
+        }))
+        .unwrap();
+        assert_eq!(whoami.scopes.len(), 1);
+        assert_eq!(whoami.scopes[0].package, "acme/sdk");
+        assert_eq!(whoami.scopes[0].version, "1.4.0");
+        assert!(whoami.ops.is_empty());
+        let back = serde_json::to_value(&whoami).unwrap();
+        assert_eq!(back["scopes"][0]["version"], "1.4.0");
+    }
+
+    #[test]
     fn whoami_from_a_registry_without_roles_falls_back_to_kind_and_grants() {
         let legacy: Whoami = serde_json::from_value(json!({
             "project": "ci", "kind": "publish",
@@ -1374,19 +1475,37 @@ mod tests {
     }
 
     #[test]
-    fn describe_secret_request_sends_null_to_clear() {
-        let set = DescribeSecretRequest {
-            description: Some("note".into()),
-        };
+    fn update_secret_request_sends_only_what_is_set() {
         assert_eq!(
-            serde_json::to_value(&set).unwrap(),
+            serde_json::to_value(UpdateSecretRequest::description(Some("note".into()))).unwrap(),
             json!({ "description": "note" })
         );
-        let clear = DescribeSecretRequest { description: None };
         assert_eq!(
-            serde_json::to_value(&clear).unwrap(),
+            serde_json::to_value(UpdateSecretRequest::description(None)).unwrap(),
             json!({ "description": null })
         );
+        assert_eq!(
+            serde_json::to_value(UpdateSecretRequest::scope(vec![Kind::Read, Kind::Publish]))
+                .unwrap(),
+            json!({ "scope": ["read", "publish"] })
+        );
+        let both = UpdateSecretRequest {
+            description: Some(Some("laptop".into())),
+            scope: Some(vec![Kind::Admin]),
+        };
+        assert_eq!(
+            serde_json::to_value(both).unwrap(),
+            json!({ "description": "laptop", "scope": ["admin"] })
+        );
+    }
+
+    #[test]
+    fn update_secret_request_keeps_null_apart_from_absent() {
+        let request: UpdateSecretRequest = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(request, UpdateSecretRequest::default());
+        let request: UpdateSecretRequest =
+            serde_json::from_value(json!({ "description": null })).unwrap();
+        assert_eq!(request.description, Some(None));
     }
 
     #[test]

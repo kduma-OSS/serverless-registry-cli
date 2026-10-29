@@ -238,3 +238,70 @@ async fn whoami_for_an_admin_that_also_reads_shows_both_roles_and_its_grants() {
         .stdout(predicate::str::contains("@acme/sdk"))
         .stdout(predicate::str::contains("admin credentials have no grants").not());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn whoami_of_a_yank_or_delete_login_lists_the_approved_operations() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/whoami"))
+        .respond_with(json(
+            200,
+            json!({
+                "project": "root", "kind": "admin", "grants": [], "roles": ["admin"],
+                "access": {},
+                "ops": [
+                    { "op": "yank", "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" },
+                    { "op": "delete", "eco": "cargo", "package": "acme-core" }
+                ]
+            }),
+        ))
+        .mount(&server)
+        .await;
+
+    sreg(&server, &["whoami"])
+        .await
+        .success()
+        .stdout(predicate::str::contains("Roles:   admin"))
+        .stdout(predicate::str::contains("this token may do only these"))
+        .stdout(predicate::str::contains("yank npm @acme/sdk 2.3.1"))
+        .stdout(predicate::str::contains(
+            "delete cargo acme-core (the whole package, every version)",
+        ))
+        .stdout(predicate::str::contains("admin credentials have no grants").not());
+
+    let assert = sreg(&server, &["whoami", "--json"]).await.success();
+    let body = stdout_json(&assert);
+    assert_eq!(body["ops"][0]["op"], "yank");
+    assert_eq!(body["ops"][1]["package"], "acme-core");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn whoami_of_a_publish_login_lists_the_approved_versions() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/whoami"))
+        .respond_with(json(
+            200,
+            json!({
+                "project": "ci", "kind": "publish",
+                "grants": [{ "eco": "composer", "package": "acme/*", "versions": "*" }],
+                "roles": ["publish"],
+                "access": { "publish": [{ "eco": "composer", "package": "acme/*", "versions": "*" }] },
+                "scopes": [{ "eco": "composer", "package": "acme/sdk", "version": "1.4.0" }]
+            }),
+        ))
+        .mount(&server)
+        .await;
+
+    sreg(&server, &["whoami"])
+        .await
+        .success()
+        .stdout(predicate::str::contains(
+            "this token may publish only these",
+        ))
+        .stdout(predicate::str::contains("composer acme/sdk 1.4.0"))
+        .stdout(predicate::str::contains("acme/*"));
+
+    let assert = sreg(&server, &["whoami", "--json"]).await.success();
+    assert_eq!(stdout_json(&assert)["scopes"][0]["package"], "acme/sdk");
+}

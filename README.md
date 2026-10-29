@@ -10,8 +10,8 @@ archive-source` for npm, cargo, NuGet and Swift; Maven and Gradle builds deploy 
 local directory that `sreg` publishes from), uploads the files straight to R2 through
 presigned URLs and commits the version through the registry's API. Published versions are immutable. It also downloads generic
 files and writes credentials for package managers, including GitHub Actions OIDC
-tokens. Administration (credentials, yank, delete) is done in the registry's web panel;
-`sreg` has no administrative commands.
+tokens. It can also yank and delete versions; the rest of the administration (credentials,
+reindexing) is done in the registry's web panel.
 
 The registry itself lives in the
 [`serverless-registry-worker`](https://github.com/kduma-OSS/serverless-registry-worker)
@@ -71,8 +71,10 @@ In GitHub Actions, use the [publish action](#github-action), which does all of t
 | `sreg generic publish <name> <version> <file>... [--label k=v]... [--meta k=v]... [--meta-file <json>] [--spec <files.json>] [--no-append]` | Publishes files as one version of a generic package. `--label` applies to every file; `--spec` lists files with their own labels instead. Files are appended to an already published version (within the registry's append window) unless `--no-append` is given. Arguments after `--` are rejected. |
 | `sreg generic get <name> [<version>\|<constraint>\|latest] [--label k=v]... [--sole] [--out <path>] [--prerelease]` | Downloads the files of a version matching the labels into `--out` after verifying size and SHA-256 and prints their paths; `--json` prints the feed entry without downloading. A `<version>` that is not an exact semver version is a constraint (npm syntax: `^1.2`, `">=1 <2"`, `1.x`) that the registry resolves to its highest matching version (`/generic/<name>/latest?version=<constraint>`, prereleases only with `--prerelease`); the resolved version is printed on stderr. `--sole` fails unless the label filter selects exactly one file (`/generic/<name>/<version>/-/download`): when several match, the candidates are listed and `sreg` exits with `1`; `--out` may then also name the file to write. |
 | `sreg whoami` | Shows the project, the roles the current token may use (`read`, `publish`, both, or `admin`) and the grants of each (`GET /api/v1/whoami`). |
+| `sreg yank <eco> <name> <version> [--oidc [--oidc-project <p>] \| --login]` | Admin. Yanks a version: it is no longer offered for new installs, the files stay downloadable (`POST /api/v1/packages/<eco>/<name>/<version>/yank`). `<eco>` is `composer`, `npm`, `cargo`, `nuget`, `generic`, `swift` or `maven`. |
+| `sreg delete <eco> <name> <version> \| --all [--yes] [--oidc [--oidc-project <p>] \| --login]` | Admin. Deletes a version and its files (it can be published again), or with `--all` the whole package with every version. Asks for confirmation (typing the package name for `--all`); without a terminal `--yes` is required. |
 | `sreg auth <composer\|npm\|cargo\|nuget\|swift\|maven> [--oidc [--project <p>]] [--write <file>] [--registry-name <n>]` | Writes credentials to `auth.json`, `.npmrc`, `credentials.toml`, `nuget.config`, `.netrc` or `settings.xml`, or prints them for the environment (e.g. as `COMPOSER_AUTH`, a `dotnet nuget add source` or `swift package-registry login` command, or Maven `settings.xml` and Gradle snippets). With `--oidc`, inside a GitHub Actions job with `id-token: write`, it fetches a JWT for the registry and builds a `<project>:gh.<jwt>` token (`_:gh.<jwt>` without `--project`: the registry then finds the project from the repository the token was issued to); without it, it uses `REGISTRY_TOKEN`. See [`docs/cli-auth.md`](docs/cli-auth.md). |
-| `sreg login [--publish <eco>:<package>@<version>]...` | Signs in through the browser and prints `export REGISTRY_TOKEN='…'` for a short-lived token, for several commands in a row (`eval "$(sreg login)"`). Without `--publish` the token is for downloading (one hour, or longer when you tick "extended validity" on the page); with it, a publish token for exactly the listed versions (15 minutes), approved only when the credential's grants allow every one. The login is a password with an optional one-time code (a `login` secret of the credential); see [Signing in through the browser](#signing-in-through-the-browser). |
+| `sreg login [--publish <eco>:<package>@<version>]... \| [--yank <eco>:<package>@<version>]... \| [--delete <eco>:<package>@<version>]... [--delete-package <eco>:<package>]...` | Signs in through the browser and prints `export REGISTRY_TOKEN='…'` for a short-lived token, for several commands in a row (`eval "$(sreg login)"`). Without options the token is for downloading (one hour, or longer when you tick "extended validity" on the page); with `--publish`, a publish token for exactly the listed versions (15 minutes), approved only when the credential's grants allow every one; with `--yank`, `--delete` and `--delete-package`, an admin token (15 minutes) that may only yank or delete exactly what the page showed. The options of different purposes cannot be combined. The login is a password with an optional one-time code (a `login` secret of the credential); see [Signing in through the browser](#signing-in-through-the-browser). |
 | `sreg version` | Prints the version of `sreg` and, with `--registry`, the registry's version and the minimum client version it accepts. |
 
 ### Signing in through the browser
@@ -90,8 +92,15 @@ short-lived token:
 - `sreg composer publish --login` (and the other `publish` commands): a publish token for the
   one package version being published. The page lists it and approves only when the grants
   allow it; with a one-time code, a recent one is required (15 minutes).
+- `sreg yank <eco> <name> <version> --login`, `sreg delete <eco> <name> <version> --login`
+  (`--all --login` for a whole package): an admin token for that one operation. The page
+  shows what is yanked or deleted and approves only when the credential holds the `admin`
+  role through the `login` secret; with a one-time code, a recent one is required (15
+  minutes).
 - `sreg login [--publish composer:acme/sdk@1.4.0]...`: the token as an `export` line, for a
-  pull or for the listed package versions.
+  pull or for the listed package versions; `--yank <eco>:<package>@<version>`, `--delete
+  <eco>:<package>@<version>` and `--delete-package <eco>:<package>` ask for an admin token for
+  exactly those operations.
 
 `--login` cannot be combined with `--oidc`. The token is never written anywhere except by
 `sreg auth --write`; the page and the password are the registry's, `sreg` never sees them.

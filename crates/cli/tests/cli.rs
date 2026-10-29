@@ -10,6 +10,8 @@ fn help_lists_all_commands() {
         "whoami",
         "auth",
         "version",
+        "yank",
+        "delete",
         #[cfg(feature = "composer")]
         "composer",
         #[cfg(feature = "npm")]
@@ -41,14 +43,12 @@ fn disabled_ecosystems_are_not_available() {
 }
 
 #[test]
-fn administrative_commands_are_not_available() {
-    for command in ["token", "yank", "delete"] {
-        cargo_bin_cmd!("sreg")
-            .arg(command)
-            .assert()
-            .code(1)
-            .stderr(predicate::str::contains("unrecognized subcommand"));
-    }
+fn credential_management_commands_are_not_available() {
+    cargo_bin_cmd!("sreg")
+        .arg("token")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("unrecognized subcommand"));
 }
 
 #[test]

@@ -6,7 +6,6 @@ mod common;
 use common::{error, json, sreg, sreg_with, stdout_json, TOKEN};
 use predicates::prelude::*;
 use serde_json::{json, Value};
-#[cfg(feature = "generic")]
 use wiremock::matchers::header;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer};
@@ -377,4 +376,198 @@ async fn an_unauthorized_answer_suggests_signing_in_again() {
         .await
         .code(1)
         .stderr(predicate::str::contains("sreg login"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_asks_for_a_yank_of_the_listed_versions() {
+    let server = login_server("admin").await;
+
+    sreg(
+        &server,
+        &["login", "--no-browser", "--yank", "npm:@acme/sdk@2.3.1"],
+    )
+    .await
+    .success()
+    .stdout(predicate::eq(format!("export REGISTRY_TOKEN='{ISSUED}'\n")))
+    .stderr(predicate::str::contains("admin token to YANK"))
+    .stderr(predicate::str::contains("npm @acme/sdk 2.3.1"));
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        bodies(&requests, "/api/v1/auth/sessions"),
+        vec![json!({
+            "purpose": "yank",
+            "scopes": [{ "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" }]
+        })]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_asks_for_a_delete_of_versions_and_whole_packages() {
+    let server = login_server("admin").await;
+
+    sreg(
+        &server,
+        &[
+            "login",
+            "--no-browser",
+            "--delete",
+            "cargo:acme-core@1.4.2",
+            "--delete-package",
+            "composer:acme/sdk",
+        ],
+    )
+    .await
+    .success()
+    .stderr(predicate::str::contains("admin token to DELETE"))
+    .stderr(predicate::str::contains("the whole package"));
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        bodies(&requests, "/api/v1/auth/sessions"),
+        vec![json!({
+            "purpose": "delete",
+            "scopes": [
+                { "eco": "cargo", "package": "acme-core", "version": "1.4.2" },
+                { "eco": "composer", "package": "acme/sdk" }
+            ]
+        })]
+    );
+}
+
+#[test]
+fn login_purposes_exclude_each_other() {
+    for args in [
+        ["login", "--yank", "npm:a@1.0.0", "--delete", "npm:a@1.0.0"],
+        ["login", "--yank", "npm:a@1.0.0", "--publish", "npm:a@1.0.0"],
+        [
+            "login",
+            "--delete-package",
+            "npm:a",
+            "--publish",
+            "npm:a@1.0.0",
+        ],
+    ] {
+        assert_cmd::cargo::cargo_bin_cmd!("sreg")
+            .args(args)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("cannot be used with"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn yank_with_login_uses_the_approved_admin_token() {
+    let server = login_server("admin").await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/packages/npm/@acme%2Fsdk/2.3.1/yank"))
+        .and(header("authorization", format!("Bearer {ISSUED}").as_str()))
+        .respond_with(json(
+            200,
+            json!({
+                "eco": "npm", "name": "@acme/sdk", "version": "2.3.1",
+                "published": "2026-10-28T10:12:00Z", "yanked": true, "files": []
+            }),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    sreg(
+        &server,
+        &[
+            "yank",
+            "npm",
+            "@acme/sdk",
+            "2.3.1",
+            "--login",
+            "--no-browser",
+        ],
+    )
+    .await
+    .success()
+    .stdout(predicate::str::contains("Yanked npm @acme/sdk 2.3.1"));
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        bodies(&requests, "/api/v1/auth/sessions"),
+        vec![json!({
+            "purpose": "yank",
+            "scopes": [{ "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" }]
+        })]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn delete_all_with_login_asks_for_the_whole_package() {
+    let server = login_server("admin").await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/packages/composer/acme%2Fsdk"))
+        .and(header("authorization", format!("Bearer {ISSUED}").as_str()))
+        .respond_with(json(
+            200,
+            json!({ "eco": "composer", "name": "acme/sdk", "deletedVersions": ["1.2.0"] }),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    sreg(
+        &server,
+        &[
+            "delete",
+            "composer",
+            "acme/sdk",
+            "--all",
+            "--yes",
+            "--login",
+            "--no-browser",
+        ],
+    )
+    .await
+    .success();
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        bodies(&requests, "/api/v1/auth/sessions"),
+        vec![json!({
+            "purpose": "delete",
+            "scopes": [{ "eco": "composer", "package": "acme/sdk" }]
+        })]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_yank_login_stops_before_any_yank() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/auth/sessions"))
+        .respond_with(session_response(&server))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/auth/sessions/poll"))
+        .respond_with(error(403, "forbidden", "The login was refused."))
+        .mount(&server)
+        .await;
+
+    sreg(
+        &server,
+        &[
+            "yank",
+            "npm",
+            "@acme/sdk",
+            "2.3.1",
+            "--login",
+            "--no-browser",
+        ],
+    )
+    .await
+    .code(1)
+    .stderr(predicate::str::contains("refused"));
+
+    let requests = server.received_requests().await.unwrap();
+    assert!(requests
+        .iter()
+        .all(|request| !request.url.path().contains("/packages/")));
 }

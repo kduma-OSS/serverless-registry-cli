@@ -1,5 +1,6 @@
 //! Command implementations.
 
+mod admin;
 mod auth;
 #[cfg(feature = "generic")]
 mod generic;
@@ -46,6 +47,8 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Whoami => whoami::run(global, &out).await,
         Command::Version => version::run(global, &out).await,
         Command::Auth(args) => auth::run(global, &out, args).await,
+        Command::Yank(args) => admin::yank(global, &out, args).await,
+        Command::Delete(args) => admin::delete(global, &out, args).await,
         Command::Login(args) => login::run(global, &out, args).await,
         #[cfg(feature = "composer")]
         Command::Composer {

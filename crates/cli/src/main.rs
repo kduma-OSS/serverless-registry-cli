@@ -8,6 +8,7 @@ mod context;
 mod exit;
 mod login;
 mod output;
+mod prompt;
 
 use std::process::ExitCode;
 

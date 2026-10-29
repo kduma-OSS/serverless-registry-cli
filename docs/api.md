@@ -209,6 +209,10 @@ within the scope of the secret that authenticated it:
 | `publish` | `whoami`, `publish/init`, `publish/commit` (within its `publish` grants)                     |
 | `admin`   | `whoami`, package listing and generic feed (unfiltered), package administration, credentials |
 
+A login token approved for a yank or delete (2.6) carries the `admin` role but only the
+operations it names: it may call `whoami` and those yank and delete routes and nothing else
+(the table above does not apply to it).
+
 Any role may hold `key` and `gh` entries; a `publish` credential usually has `gh` entries and
 may also have `key` entries (for publishing from outside GitHub Actions). Any credential may also
 hold `login` entries for people (2.6). A credential that holds `admin` together with `read` or
@@ -267,9 +271,13 @@ With the reserved login, `_:gh.<jwt>`, the Worker resolves the project from the 
    JSON array of project names; the union is the list of candidates.
 3. Load every candidate's record and keep the ones with a matching active `gh` entry.
 4. Keep only the credentials that hold the role the request needs, through a matching entry
-   whose `scope` includes it: `publish` for `/api/v1/publish/*`, `read` for every other
-   authenticated route (including the generic and NuGet feeds and a panel login). An `admin`
-   credential is never resolved through `_`.
+   whose `scope` includes it: `publish` for `/api/v1/publish/*`, `admin` for the routes that
+   need the `admin` role alone (yank, delete and reindex of packages, credentials and their
+   secrets, the GitHub repository lookup and bucket accept), `read` for every other
+   authenticated route (including `whoami`, the package listing, the generic and NuGet feeds
+   and a panel login). So `sreg yank --oidc` and `sreg delete --oidc` need no `--project`
+   when exactly one `admin` credential has a matching `gh` entry; `<project>:gh.<jwt>` works
+   for an `admin`-scoped `gh` entry on the same routes.
 5. Exactly one left → that is the identity. None → `401 unauthorized`. More than one →
    `401 unauthorized` with the message
    "more than one project matches this token; use <project>:gh.<jwt>".
@@ -292,14 +300,17 @@ token** (`type` `st`, 2.1) for the credential the entry belongs to. The token ca
 role and the grants of that role: a pull login issues a `read` token and a publish login a
 `publish` token, and the credential must hold that role with the `login`'s `scope` including it
 (a credential with both roles can issue both kinds; a `login` scoped to `read` only issues pull
-tokens). A `login` whose scope has no `read` or `publish` (an `admin` only login) signs in to
-the panel but never issues a token (the approval page does not accept it).
+tokens). A yank or delete login issues an `admin` token limited to the operations it names (a
+credential with the `admin` role and a `login` whose scope includes `admin`). A `login` whose
+scope has no `read` or `publish` (an `admin` only login) signs in to the panel and approves
+yank and delete logins; it never issues a pull, a publish or a general administration token
+(the approval page of those does not accept it).
 
 The flow (the CLI does it for `sreg login`, `sreg auth <ecosystem> --login`, `sreg generic get
---login` and `sreg <ecosystem> publish --login`):
+--login`, `sreg <ecosystem> publish --login`, `sreg yank --login` and `sreg delete --login`):
 
-1. The client calls `POST /api/v1/auth/sessions` (6.20) with what it needs: a pull, or a
-   publish of named package versions. It receives a signed session id, the page to open and a
+1. The client calls `POST /api/v1/auth/sessions` (6.20) with what it needs: a pull, a
+   publish of named package versions, or a yank or delete of named versions or packages. It receives a signed session id, the page to open and a
    poll token. **Nothing is stored**, so anonymous callers cannot use up KV writes.
 2. The person opens `<PUBLIC_URL>/authorize/<session>`. The page shows the request. Without a
    login session the person signs in in up to two steps. **Step 1** is the project name and the
@@ -321,22 +332,40 @@ exp }`, valid 5 minutes, `HttpOnly; Secure; SameSite=Lax`, limited to the path o
    allowed and offers no approval. The same checks run again on the approval request. When
    the entry has a one-time code, a publish also needs one verified within the last 15
    minutes in this browser session; if not, the page asks for a new one first. A **pull** has
-   a checkbox "extended validity".
+   a checkbox "extended validity". A **yank** or **delete** is shown with every package
+   version (a delete may be a whole package, shown as such, with a warning that deleting
+   cannot be undone) and is approved only when the credential has the `admin` role (within the
+   login's scope); there are no grants to check. It needs the same fresh one-time code as a
+   publish. The sign-in on this page accepts an `admin`-only login only for a yank or delete.
 4. On approval the Worker issues the token and stores it at `login-session:<nonce>` for the
    rest of the session's life (at most 10 minutes). The client polls `POST
 /api/v1/auth/sessions/poll` (6.21) until it receives the token, which is then deleted.
 
 A pull token lasts 1 hour, or `LOGIN_TOKEN_EXTENDED_TTL_HOURS` (default 24) when extended
-validity was ticked; a publish token lasts 15 minutes. A publish token carries `scopes`, the
+validity was ticked; a publish token and an admin token (yank, delete) last 15 minutes. A publish token carries `scopes`, the
 approved `{ eco, package, version }` list (at most `MAX_PUBLISH_SCOPES`, default 20): `publish/init` and `publish/commit`
 answer `403 forbidden` for anything else, and `whoami` (6.3) returns the scopes.
 
+An admin token carries `ops`, the approved operations, `{ "op": "yank" | "delete", "eco",
+"package", "version"? }` (at most `MAX_PUBLISH_SCOPES`); `version` is absent for the deletion
+of a whole package. It carries the `admin` role and may call only:
+`POST /api/v1/packages/<eco>/<name>/<version>/yank` for a version in a `yank` operation,
+`DELETE /api/v1/packages/<eco>/<name>/<version>` for a version in a `delete` operation,
+`DELETE /api/v1/packages/<eco>/<name>` for a `delete` operation without `version`, and `GET
+/api/v1/whoami`. Names and versions are compared in their stored form (1.3). An operation
+that was not approved is `403 forbidden` ("This login token was not approved for this
+operation."), every other route is `403 forbidden` ("This login token may not perform this
+operation."): the package listing, `reindex`, credentials, secrets, the GitHub lookup, bucket
+accept and publishing, and so are the native protocol routes and the panel login. A delete of
+a whole package does not approve deleting one of its versions, nor the other way round.
+
 The token is `<project>:st.<payload>.<signature>`; the payload is base64url JSON
-`{ "typ": "st", "project", "entry", "exp", "scopes"? }` and the signature its HMAC-SHA256 under
+`{ "typ": "st", "project", "entry", "exp", "scopes"?, "ops"? }` and the signature its HMAC-SHA256 under
 a key derived from `SESSION_SECRET` and `"st"`. Nothing is stored per token. On every request
 the Worker verifies the signature, `typ`, `exp` and `project`, that the credential is not
-`admin`, that `scopes` are present exactly for `publish`, and that the `login` entry named by
-`entry` still exists and is active: expiring or removing the entry, deleting the credential or
+lacks the role (`read` for a pull token, `publish` when `scopes` are present, `admin` when `ops`
+are present; a token never has both), and that the `login` entry named by
+`entry` still exists and is active and its scope includes the role: expiring or removing the entry, deleting the credential or
 changing `SESSION_SECRET` ends every token it issued (within the cache time of 2.4).
 
 The one-time code's shared secret has to be recoverable, so it is stored AES-GCM encrypted
@@ -699,7 +728,9 @@ administer, otherwise `read` and its grants when it may read, otherwise `publish
 grants.
 
 A publish login token (2.6) adds `"scopes": [{ "eco", "package", "version" }]`, the only
-versions it may publish.
+versions it may publish. A yank or delete login token adds `"ops": [{ "op", "eco", "package",
+"version"? }]`, the only operations it may perform; its `roles` are `["admin"]`, `access` is `{}`
+and the legacy `kind` is `admin` with `grants` `[]`.
 
 `project` is `[<source>.]<project>` (e.g. `okta.shop-frontend` for a provider-backed
 credential); for an `_:gh.<jwt>` token it is the resolved project name, never `_` (2.5). Grants are returned as stored, with `transitive`; they are `[]` for `admin`.
@@ -1613,6 +1644,21 @@ publish names every version to approve:
 }
 ```
 
+A yank or delete names what to approve the same way, with the purpose in `purpose`:
+
+```json
+{
+  "purpose": "yank",
+  "scopes": [{ "eco": "npm", "package": "@acme/sdk", "version": "2.3.1" }]
+}
+```
+
+Every scope of a `yank` needs a `version`. A scope of a `delete` may leave `version` out (or
+send `null`) to mean the whole package with every version; a version and the whole package of
+the same package may both be listed. `eco` is not allowed for them. The session is approved
+by a credential with the `admin` role (2.6), and the poll (6.21) then returns a token with
+`"kind": "admin"` that lasts 15 minutes.
+
 `scopes` has 1 to `MAX_PUBLISH_SCOPES` entries (default 20, at most 100), and the resulting `url`
 may be at most 8000 characters (the signed session, scopes included, is in it); `eco` must be enabled, `version` valid for it, and `package` and
 `version` are returned in their stored form (NuGet and Swift names lower-cased, NuGet versions
@@ -1650,6 +1696,7 @@ one returned with the session (`401 unauthorized` otherwise). Responses:
   }
   ```
 
+  `kind` is `read` for a pull, `publish` for a publish and `admin` for a yank or delete.
   `token` includes `TOKEN_PREFIX` when it is set.
 
 - `403 forbidden`: the person refused. `404 not_found`: the session has expired.

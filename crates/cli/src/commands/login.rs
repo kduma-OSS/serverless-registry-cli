@@ -3,7 +3,7 @@
 
 use anyhow::{bail, Context};
 use serde::Serialize;
-use sreg_core::login::{LoginPurpose, PublishScope};
+use sreg_core::login::{LoginPurpose, PackageScope, PublishScope};
 use sreg_core::models::Kind;
 use sreg_core::Ecosystem;
 
@@ -21,7 +21,7 @@ struct IssuedReport {
 }
 
 pub async fn run(global: &GlobalArgs, out: &Output, args: &LoginArgs) -> anyhow::Result<()> {
-    let purpose = purpose(&args.publish)?;
+    let purpose = purpose(args)?;
     let issued = crate::login::acquire(global, &purpose).await?;
     let report = IssuedReport {
         token: issued.token,
@@ -34,17 +34,60 @@ pub async fn run(global: &GlobalArgs, out: &Output, args: &LoginArgs) -> anyhow:
     })
 }
 
-/// A pull without `--publish`, otherwise a publish of the listed versions. How many the
-/// registry accepts is its `MAX_PUBLISH_SCOPES` setting, so it answers for the count.
-fn purpose(publish: &[String]) -> anyhow::Result<LoginPurpose> {
-    if publish.is_empty() {
+/// A pull without options, otherwise a publish of the listed versions (`--publish`), a yank
+/// (`--yank`) or a delete (`--delete`, `--delete-package`). How many the registry accepts is
+/// its `MAX_PUBLISH_SCOPES` setting, so it answers for the count.
+fn purpose(args: &LoginArgs) -> anyhow::Result<LoginPurpose> {
+    if !args.yank.is_empty() {
+        let scopes = args
+            .yank
+            .iter()
+            .map(|spec| parse_scope(spec).map(PackageScope::from))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        return Ok(LoginPurpose::Yank { scopes });
+    }
+    if !args.delete.is_empty() || !args.delete_package.is_empty() {
+        let versions = args
+            .delete
+            .iter()
+            .map(|spec| parse_scope(spec).map(PackageScope::from));
+        let packages = args.delete_package.iter().map(|spec| parse_package(spec));
+        let scopes = versions
+            .chain(packages)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        return Ok(LoginPurpose::Delete { scopes });
+    }
+    if args.publish.is_empty() {
         return Ok(LoginPurpose::Pull { eco: None });
     }
-    let scopes = publish
+    let scopes = args
+        .publish
         .iter()
         .map(|spec| parse_scope(spec))
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(LoginPurpose::Publish { scopes })
+}
+
+/// Parses `<ecosystem>:<package>`, a whole package for `--delete-package`.
+fn parse_package(spec: &str) -> anyhow::Result<PackageScope> {
+    let (eco, package) = spec
+        .split_once(':')
+        .with_context(|| format!("`{spec}`: expected <ecosystem>:<package>"))?;
+    if package.is_empty() {
+        bail!("`{spec}`: the package must not be empty");
+    }
+    Ok(PackageScope {
+        eco: parse_ecosystem(spec, eco)?,
+        package: package.to_owned(),
+        version: None,
+    })
+}
+
+fn parse_ecosystem(spec: &str, eco: &str) -> anyhow::Result<Ecosystem> {
+    Ecosystem::ALL
+        .into_iter()
+        .find(|candidate| candidate.as_str() == eco)
+        .with_context(|| format!("`{spec}`: unknown ecosystem `{eco}`"))
 }
 
 /// Parses `<ecosystem>:<package>@<version>`. The ecosystem ends at the first `:` (a
@@ -60,12 +103,8 @@ fn parse_scope(spec: &str) -> anyhow::Result<PublishScope> {
     if package.is_empty() || version.is_empty() {
         bail!("`{spec}`: the package and the version must not be empty");
     }
-    let eco = Ecosystem::ALL
-        .into_iter()
-        .find(|candidate| candidate.as_str() == eco)
-        .with_context(|| format!("`{spec}`: unknown ecosystem `{eco}`"))?;
     Ok(PublishScope {
-        eco,
+        eco: parse_ecosystem(spec, eco)?,
         package: package.to_owned(),
         version: version.to_owned(),
     })
@@ -121,16 +160,70 @@ mod tests {
         }
     }
 
+    fn args(publish: &[&str], yank: &[&str], delete: &[&str], packages: &[&str]) -> LoginArgs {
+        let owned = |list: &[&str]| list.iter().map(|spec| (*spec).to_owned()).collect();
+        LoginArgs {
+            publish: owned(publish),
+            yank: owned(yank),
+            delete: owned(delete),
+            delete_package: owned(packages),
+        }
+    }
+
     #[test]
-    fn no_publish_flag_asks_for_a_pull() {
-        assert_eq!(purpose(&[]).unwrap(), LoginPurpose::Pull { eco: None });
-        let publish = purpose(&["npm:left-pad@1.0.0".to_owned()]).unwrap();
-        assert!(matches!(publish, LoginPurpose::Publish { scopes } if scopes.len() == 1));
+    fn no_flag_asks_for_a_pull() {
+        let none = args(&[], &[], &[], &[]);
+        assert_eq!(purpose(&none).unwrap(), LoginPurpose::Pull { eco: None });
+    }
+
+    #[test]
+    fn publish_does_not_limit_the_count() {
         // The limit is the registry's to enforce, and an operator can raise it.
         let many: Vec<String> = (0..21).map(|i| format!("npm:p@1.0.{i}")).collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
         assert!(matches!(
-            purpose(&many).unwrap(),
+            purpose(&args(&many, &[], &[], &[])).unwrap(),
             LoginPurpose::Publish { scopes } if scopes.len() == 21
         ));
+    }
+
+    #[test]
+    fn yank_asks_for_the_listed_versions() {
+        let purpose = purpose(&args(&[], &["npm:@acme/sdk@2.3.1"], &[], &[])).unwrap();
+        assert_eq!(
+            purpose,
+            LoginPurpose::Yank {
+                scopes: vec![PackageScope {
+                    eco: Ecosystem::Npm,
+                    package: "@acme/sdk".into(),
+                    version: Some("2.3.1".into()),
+                }]
+            }
+        );
+    }
+
+    #[test]
+    fn delete_mixes_versions_and_whole_packages() {
+        let purpose = purpose(&args(
+            &[],
+            &[],
+            &["cargo:acme-core@1.4.2"],
+            &["maven:org.acme:lib"],
+        ))
+        .unwrap();
+        let LoginPurpose::Delete { scopes } = purpose else {
+            panic!("expected a delete");
+        };
+        assert_eq!(scopes.len(), 2);
+        assert_eq!(scopes[0].version.as_deref(), Some("1.4.2"));
+        assert_eq!(scopes[1].package, "org.acme:lib");
+        assert_eq!(scopes[1].version, None);
+    }
+
+    #[test]
+    fn rejects_malformed_package_specs() {
+        for spec in ["acme", "npm:", "rpm:acme"] {
+            assert!(parse_package(spec).is_err(), "{spec}");
+        }
     }
 }

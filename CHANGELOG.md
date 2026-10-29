@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `sreg yank <eco> <name> <version>` and `sreg delete <eco> <name> (<version> | --all)` are
+  back, for `composer`, `npm`, `cargo`, `nuget`, `generic`, `swift` and `maven`. They
+  authenticate with the token, with GitHub Actions OIDC (`--oidc`, `--oidc-project`; `_`
+  lets the registry find the project, an `admin` credential included) or by signing in
+  through the browser (`--login`).
+- `sreg login --yank`, `--delete` and `--delete-package` ask the registry for a short-lived
+  admin token that may yank or delete exactly the listed versions or packages (needs a
+  registry that supports the `yank` and `delete` login purposes, `docs/api.md` 6.20).
+- The client can replace the `scope` of a secret: `Client::update_secret` sends
+  `PATCH …/secrets/<id>` with a description and/or a scope (`UpdateSecretRequest`);
+  `describe_secret` keeps working and sends only the description.
+- `sreg whoami` lists the operations of a yank or delete login token (`ops` in the registry's
+  answer, also in `--json`) instead of reporting that it has no grants, and the package
+  versions a publish login token may publish (`scopes`).
+
 ## [0.2.2] - 2026-10-28
 
 ### Changed
