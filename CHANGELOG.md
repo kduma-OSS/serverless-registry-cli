@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `yank` and `delete` grants, and the API models carry `yank_grants` / `delete_grants`.
   Needs a Worker with the roles; docs/spec.md and docs/api.md are synced with the Worker.
 
+### Changed
+
+- Shared specification and API contract document NuGet SHA-512 archive checksums,
+  backfill and reindex for older versions, and the separate lock-file and signature
+  verification mechanisms. CLI behavior is unchanged.
+
 ## [0.2.3] - 2026-10-29
 
 ### Added
